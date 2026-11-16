@@ -85,13 +85,14 @@ export function lineOf(
   const left = Math.max(0, max - (num(session?.pingsSoFar) ?? 0))
   const bigEnough = (num(session?.ctxTokens) ?? 0) >= (envNum(env.minCtxTokens) ?? num(config.minCtxTokens) ?? DEFAULT_MIN_CTX_TOKENS)
   const muted = session?.doneAt !== undefined || session?.lastPingHit === false
-  const extendsIt = left > 0 && bigEnough && !muted
   const minAgeMs = (envNum(env.minAgeSec) ?? num(config.minAgeSec) ?? DEFAULT_MIN_AGE_SEC) * 1000
+  // A ping that waits past the TTL finds the cache cold and holds nothing.
+  const extendsIt = left > 0 && bigEnough && !muted && minAgeMs < warmUntil - lastSent
   const heldUntil = extendsIt ? warmUntil + left * minAgeMs : warmUntil
   const pingsUsd = Math.max(0, num(session?.pingCostUsd) ?? 0)
   const line: Line = { kind: 'cached', left, extends: extendsIt, warmUntil, heldUntil, pingsUsd }
   const nextWarmUsd = num(session?.warmTurnUsd)
-  if (nextWarmUsd !== undefined) Object.assign(line, { nextWarmUsd, holdUsd: extendsIt ? left * nextWarmUsd : 0 })
+  if (nextWarmUsd !== undefined) Object.assign(line, { nextWarmUsd, holdUsd: heldUntil > warmUntil ? left * nextWarmUsd : 0 })
   return line
 }
 
@@ -196,7 +197,7 @@ export async function refresh($: $): Promise<void> {
   try {
     const sid = await $.session.id()
     const home = (await $.env.get('CACHE_KEEPER_HOME')) ?? `${await $.env.get('HOME')}/.claude-cache-keeper`
-    if (!/^[A-Za-z0-9_-]+$/.test(sid)) return $.ui.status(undefined)
+    if (!/^[A-Za-z0-9_-]+$/.test(sid)) return clear($, undefined)
     const [session, config, tuning] = await Promise.all([
       readJson($, `${home}/sessions/${sid}.json`),
       readJson($, `${home}/config.json`),

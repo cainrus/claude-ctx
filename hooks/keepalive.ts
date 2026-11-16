@@ -17,6 +17,8 @@ const CLI_TIMEOUT_MS = 20_000
 const COMPACT_RETRY_MS = [1_000, 3_000, 10_000]
 // WORKAROUND: `$.model.fork` has no timeout of its own (anthropics/claude-code#101446).
 const FORK_TIMEOUT_MS = 120_000
+/** src/commands.ts MANUAL_FORK_MAX_MS, with a margin: the mod cannot import it. */
+const BUTTON_PING_STALE_SEC = 150
 const COMPACT_AFTER_TURN_MS = 120_000
 
 type Answer =
@@ -186,8 +188,9 @@ export function isPingTurn(text: string): boolean {
 }
 
 /** The text that answers `/cache-keeper:ping`'s turn, or undefined to let it reach the model as a wake turn. */
-export async function manualPing($: $): Promise<string | undefined> {
-  const a = await cli($, 'ping-now')
+export async function manualPing($: $, button = false): Promise<string | undefined> {
+  const a = await cli($, 'ping-now', button ? { button } : {})
+  if (a === undefined && button && !answered) schedule($, BUTTON_PING_STALE_SEC)
   if (a?.action === 'none') return a.text ?? 'cache-keeper: no ping sent.'
   if (a?.action !== 'fork') return undefined
   forking = true
@@ -199,6 +202,13 @@ export async function manualPing($: $): Promise<string | undefined> {
   }
   const s = await cli($, 'forked', { fork: forkResult(r) })
   if (s?.action === 'turn') return undefined
+  // A typed command re-arms at its turn's end; a band press has no turn, so the next ping is timed from here.
+  // Unrecorded, its ping stays open until MANUAL_FORK_MAX_MS (src/commands.ts) has passed: look again after that.
+  // INVARIANT: not while an answered question's turn runs: nothing arms until its turn.complete.
+  if (button && !answered) {
+    if (s === undefined) schedule($, BUTTON_PING_STALE_SEC)
+    else if (s.action === 'none' && s.dueInSec !== undefined) schedule($, s.dueInSec)
+  }
   if (s?.action === 'none' && s.text !== undefined) return s.text
   // INVARIANT: never a second request on top of a fork that went out, even when the CLI did not record it.
   return r.isAnswered ? 'cache-keeper: pinged, but keeper could not record it.' : 'cache-keeper: no ping sent: the fork failed.'

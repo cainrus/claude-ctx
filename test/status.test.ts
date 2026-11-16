@@ -48,6 +48,13 @@ test('the far end is the earliest one: each ping adds minAgeSec, from env, confi
   assert.equal(pick(lineOf(session(), { maxPings: 2, minAgeSec: 40 * 60 }, {}, T)).heldUntil, T + 60 * MIN + 40 * MIN)
   assert.equal(pick(lineOf(session(), { maxPings: 2, minAgeSec: 40 * 60 }, { minAgeSec: '1800' }, T)).heldUntil, T + 60 * MIN + 30 * MIN)
   assert.equal(DEFAULT_MIN_AGE_MIN * 60, THRESHOLDS.minAgeSec, 'the line copies keeper policy, keep them equal')
+  // A TTL shorter than minAgeSec: a ping would find the cache cold, so nothing is held and nothing is priced to hold.
+  const short = pick(lineOf(session({ warmTurnUsd: 0.05 }), { maxPings: 2, cacheTtlSec: 300 }, {}, T))
+  assert.equal(short.heldUntil, short.warmUntil)
+  assert.equal(short.holdUsd, 0)
+  assert.equal(short.extends, false, 'final, and no ping button on the band')
+  const edge = pick(lineOf(session(), { maxPings: 2, cacheTtlSec: 3000 }, {}, T))
+  assert.equal(edge.heldUntil, edge.warmUntil, 'a ping at exactly the TTL lands cold too')
 })
 
 test('the time is local: the offset is applied to both ends', () => {

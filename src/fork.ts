@@ -8,10 +8,10 @@
  * Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
  */
 
-import { decideWake, PING_IN_FLIGHT_MS, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
+import { decideWake, MANUAL_FORK_MAX_MS, pingInFlight, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
 import { groupedTokens, hhmm, NOTHING_TO_HOLD } from './format.ts'
 import { appendLedger } from './ledger.ts'
-import { logPingCost } from './report.ts'
+import { addPingCost } from './report.ts'
 import { closePing, compactedSinceRequest, forkOwns, loadSession, saveForkClaim, saveSession, warmUntilOf } from './state.ts'
 
 export const FORK_PROMPT = `${WAKE_MARKER} Reply with exactly "ok".`
@@ -35,6 +35,8 @@ export interface ForkInput extends HookInput {
   fork?: ForkResult
   /** compact-check: `session.compact`'s trigger. */
   trigger?: string
+  /** ping-now: pressed on the band, so no command turn follows to carry a fallback or to be gated. */
+  button?: boolean
 }
 
 export type ForkAnswer =
@@ -193,7 +195,9 @@ export function forked(input: ForkInput, ctx: Ctx): number {
       retries < MAX_FORK_RETRIES &&
       ageSec + FORK_RETRY_SEC + FORK_TIMEOUT_SEC <= thresholds.maxAgeSec
     const waiting = state.waitingSince !== undefined
-    const next = retry ? 'retry' : manual || (!waiting && !personBack && ageSec < thresholds.maxAgeSec) ? 'turn' : 'drop'
+    // A band press has no command turn to fall back into: its failed fork is dropped.
+    const button = state.pingButton === true
+    const next = retry ? 'retry' : button ? 'drop' : manual || (!waiting && !personBack && ageSec < thresholds.maxAgeSec) ? 'turn' : 'drop'
     appendLedger(home, { ...base, event: 'fork-failed', failure, next, ageSec })
     state.lastPingAt = ctx.now
     if (next === 'retry') {
@@ -206,6 +210,11 @@ export function forked(input: ForkInput, ctx: Ctx): number {
     if (next === 'drop') {
       closePing(state)
       saveSession(home, state)
+      // No turn follows a press to re-arm the mod's timer, which may have fired and died while this fork was out.
+      if (button) {
+        const dueInSec = Math.max(1, thresholds.minAgeSec - ageSec + 1)
+        return answer(ctx, { action: 'none', dueInSec, text: `cache-keeper: no ping sent: the fork failed (${failure}).` })
+      }
       return answer(ctx, personBack ? { action: 'none', dueInSec: delaySec } : { action: 'none' })
     }
     state.pingTransport = 'turn'
@@ -221,6 +230,7 @@ export function forked(input: ForkInput, ctx: Ctx): number {
     outputTokens: finiteOrZero(f.usage.output_tokens),
   }
   const manual = state.pingManual === true
+  const button = state.pingButton === true
   const personBack = (state.lastHumanAt ?? 0) > (state.lastPingAt ?? 0)
   closePing(state)
   if (!personBack) state.lastTurnEndAt = ctx.now
@@ -228,17 +238,21 @@ export function forked(input: ForkInput, ctx: Ctx): number {
   saveForkClaim(home, sid, ctx.now)
 
   if (manual) {
-    state.gateTurnAt = ctx.now
-    logPingCost(home, state, { ...base, event: 'manual-ping', transport: 'fork', ...usage }, ctx.config.prices)
+    if (!button) state.gateTurnAt = ctx.now
+    const entry = { ...base, event: 'manual-ping', transport: 'fork', ...usage } as const
+    addPingCost(state, entry, ctx.config.prices)
     saveSession(home, state)
+    appendLedger(home, entry)
     return answer(ctx, { action: 'none', dueInSec: delaySec, text: manualPingText(usage, ctx.now + ctx.config.cacheTtlSec * 1000) })
   }
 
   const denom = usage.cacheRead + usage.cacheWrite + usage.inputTokens
   const hit = denom > 0 && usage.cacheRead / denom >= hitRatio
   state.lastPingHit = hit
-  logPingCost(home, state, { ...base, event: hit ? 'wake-hit' : 'wake-miss', transport: 'fork', ...usage }, ctx.config.prices)
+  const entry = { ...base, event: hit ? 'wake-hit' : 'wake-miss', transport: 'fork', ...usage } as const
+  addPingCost(state, entry, ctx.config.prices)
   saveSession(home, state)
+  appendLedger(home, entry)
   return answer(ctx, { action: 'none', dueInSec: delaySec })
 }
 
@@ -250,15 +264,15 @@ export function manualPingText(u: { cacheRead: number; cacheWrite: number }, war
   return `cache-keeper: pinged. Read ${groupedTokens(u.cacheRead)} cached tokens, wrote ${groupedTokens(u.cacheWrite)}; cached till ${hhmm(warmUntil)}.`
 }
 
-export const MANUAL_FORK_MAX_MS = 140_000
-
 /** `/cache-keeper:ping` reached the mod: a fork, a refusal, or `pass` (forks off: the command's own turn is the ping). */
 export function pingNow(input: ForkInput, ctx: Ctx): number {
   const sid = input.session_id
   const { home, enabled, forkPings, cacheTtlSec } = ctx.config
   const state = sid ? loadSession(home, sid) : undefined
+  // INVARIANT: a band press has no command turn, so it marks no Stop as the gate's and leaves nothing for a turn to close.
+  const button = input.button === true
   const refuse = (why: string) => {
-    if (state) {
+    if (state && !button) {
       state.gateTurnAt = ctx.now
       saveSession(home, state)
     }
@@ -270,14 +284,17 @@ export function pingNow(input: ForkInput, ctx: Ctx): number {
   if (!state || warmUntil === undefined) return refuse(NOTHING_TO_HOLD.noTurn)
   if (ctx.now >= warmUntil) return refuse(NOTHING_TO_HOLD.expired(warmUntil))
   if (compactedSinceRequest(state)) return refuse(NOTHING_TO_HOLD.compacted)
-  if (state.pendingPing && ctx.now - (state.lastPingAt ?? 0) < PING_IN_FLIGHT_MS) return refuse('a ping is already on its way')
+  if (pingInFlight(state, ctx.now)) return refuse('a ping is already on its way')
+  if (button && !forkPings) return refuse('the band pings by fork, and forks are off: /cache-keeper:ping sends a turn')
   state.pendingPing = true
   state.pingTransport = forkPings ? 'fork' : 'turn'
   state.pingManual = true
+  if (button) state.pingButton = true
+  else delete state.pingButton
   state.lastPingAt = ctx.now
   // WARNING: with a fork the mod answers the command's turn, even if the CLI fails after it: that Stop is the mod's.
   // Marked as of the fork's latest end, so a slow one does not push the Stop out of the window.
-  if (forkPings) state.gateTurnAt = ctx.now + MANUAL_FORK_MAX_MS
+  if (forkPings && !button) state.gateTurnAt = ctx.now + MANUAL_FORK_MAX_MS
   saveSession(home, state)
   return answer(ctx, forkPings ? { action: 'fork', prompt: FORK_PROMPT } : { action: 'pass' })
 }

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { appendFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { isPingCommand, isStatusCommand, PING_COMMAND, PING_MARKER, record, STATUS_COMMAND, touch, wake } from '../src/commands.ts'
+import { isPingCommand, isStatusCommand, MANUAL_FORK_MAX_MS, PING_COMMAND, PING_MARKER, record, STATUS_COMMAND, touch, wake } from '../src/commands.ts'
 import { FORK_PROMPT, forked, manualPingText, pingNow, type ForkAnswer, type ForkResult } from '../src/fork.ts'
 import { configWarnings, settingsOf, statusReport } from '../src/inspect.ts'
 import { measuredBreakeven, positionStats } from '../src/tune.ts'
@@ -318,6 +318,56 @@ test('forked (manual): a cold read says so and still mutes nothing; a failed for
   assert.equal(after.lastPingHit, null)
   assert.equal(after.lastTurnEndAt, T0 + 10 * MIN + 1000)
   assert.deepEqual(readLedger(failed.home).map((e) => e.event), ['fork-failed', 'manual-ping'])
+})
+
+test('band press: no gate mark, a failed fork is dropped (nothing left open), a hit re-arms the timer', () => {
+  // A hit: priced and logged, but no Stop is marked as the gate's: no command turn follows a press.
+  const hit = setup()
+  assert.deepEqual(answerOf(pingNow, { button: true }, ctxAt(hit.config, T0 + 10 * MIN)), { action: 'fork', prompt: FORK_PROMPT })
+  assert.equal(loadSession(hit.home, SID)!.gateTurnAt, undefined)
+  const a = answerOf(forked, { fork: HIT }, ctxAt(hit.config, T0 + 10 * MIN + 2000))
+  assert.equal(a.action, 'none')
+  assert.equal((a as any).dueInSec, hit.config.delaySec)
+  const s = loadSession(hit.home, SID)!
+  assert.equal(s.gateTurnAt, undefined)
+  assert.equal(s.pendingPing, false)
+  assert.equal(s.pingButton, undefined)
+  assert.deepEqual(readLedger(hit.home).map((e) => e.event), ['manual-ping'])
+
+  // A failed fork: no fallback turn (none would be sent), the ping closed, the next press not refused.
+  const failed = setup()
+  answerOf(pingNow, { button: true }, ctxAt(failed.config, T0 + 10 * MIN))
+  const f = answerOf(forked, { fork: { isAnswered: false, reason: 'api-error' } }, ctxAt(failed.config, T0 + 10 * MIN + 1000))
+  // The mod's timer is re-armed for keeper's own ping, due once the cache is minAgeSec old.
+  assert.deepEqual(f, { action: 'none', dueInSec: failed.config.thresholds.minAgeSec - 601 + 1, text: 'cache-keeper: no ping sent: the fork failed (api-error).' })
+  const after = loadSession(failed.home, SID)!
+  assert.equal(after.pendingPing, false)
+  assert.equal(after.pingManual, undefined)
+  assert.equal(after.gateTurnAt, undefined)
+  assert.equal(answerOf(pingNow, { button: true }, ctxAt(failed.config, T0 + 11 * MIN)).action, 'fork')
+
+  // Forks off: refused up front, nothing opened, and keeper's own wake still goes out.
+  const off = setup({ CACHE_KEEPER_FORK: '0' })
+  assert.match((answerOf(pingNow, { button: true }, ctxAt(off.config, T0 + 10 * MIN)) as any).text, /forks are off/)
+  const o = loadSession(off.home, SID)!
+  assert.equal(o.pendingPing, false)
+  assert.equal(o.gateTurnAt, undefined)
+
+  // A press whose fork was never recorded (the CLI after it failed) stops blocking after MANUAL_FORK_MAX_MS, not 10 min;
+  // a typed ping after it does not inherit the band flag.
+  const lost = setup()
+  answerOf(pingNow, { button: true }, ctxAt(lost.config, T0 + 10 * MIN))
+  assert.match((answerOf(pingNow, {}, ctxAt(lost.config, T0 + 10 * MIN + MANUAL_FORK_MAX_MS - 1)) as any).text, /already on its way/)
+  assert.equal(answerOf(pingNow, {}, ctxAt(lost.config, T0 + 10 * MIN + MANUAL_FORK_MAX_MS)).action, 'fork')
+  const typed = loadSession(lost.home, SID)!
+  assert.equal(typed.pingButton, undefined)
+  assert.ok(typed.gateTurnAt !== undefined, 'the typed ping marks its command turn again')
+
+  // A refusal on a press marks nothing either.
+  const busy = setup()
+  answerOf(pingNow, { button: true }, ctxAt(busy.config, T0 + 2 * MIN))
+  assert.match((answerOf(pingNow, { button: true }, ctxAt(busy.config, T0 + 3 * MIN)) as any).text, /already on its way/)
+  assert.equal(loadSession(busy.home, SID)!.gateTurnAt, undefined)
 })
 
 test('report: manual pings cost, but are neither sent pings nor hits', () => {

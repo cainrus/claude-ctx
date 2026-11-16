@@ -40,6 +40,8 @@ export interface SessionState {
   forkRetries?: number
   /** The open ping is `/cache-keeper:ping`'s: logged as `manual-ping`, never scored. */
   pingManual?: boolean
+  /** That manual ping came from the band: no command turn follows it. */
+  pingButton?: boolean
   /** A failed fork waits on the mod's retry timer (not in flight). */
   forkRetryParked?: boolean
   /** Cleared by the next turn `record` closes. */
@@ -160,6 +162,7 @@ export function warmUntilOf(state: SessionState | undefined, cacheTtlSec: number
 export function closePing(state: SessionState): void {
   state.pendingPing = false
   delete state.pingManual
+  delete state.pingButton
   delete state.forkRetries
   delete state.forkRetryParked
 }

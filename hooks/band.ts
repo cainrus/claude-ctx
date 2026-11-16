@@ -98,8 +98,8 @@ async function press($: $, key: 'ping' | 'done', refresh: () => Promise<void>): 
   if (busy) return
   busy = true
   try {
-    // undefined: the ping needs a turn of its own (forks off, or the fork failed); the command sends one.
-    const text = key === 'ping' ? ((await manualPing($)) ?? 'cache-keeper: this ping needs a turn: run /cache-keeper:ping.') : await markDone($)
+    // undefined only when the CLI could not be read: a band press never leaves a ping for a turn to close.
+    const text = key === 'ping' ? ((await manualPing($, true)) ?? 'cache-keeper: keeper did not answer; whether a ping went out is unknown.') : await markDone($)
     $.ui.toast(text)
   } catch {
     $.ui.toast('cache-keeper: that did not go through.')

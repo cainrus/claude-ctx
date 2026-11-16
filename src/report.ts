@@ -7,7 +7,7 @@
  */
 
 import type { Config } from './config.ts'
-import { appendLedger, type LedgerEntry, REFUSAL_REASONS, type RefusalReason } from './ledger.ts'
+import { type LedgerEntry, REFUSAL_REASONS, type RefusalReason } from './ledger.ts'
 import { type PriceTable, PRICES_AS_OF, promptOf, rateFor, requestUsd, rowFor } from './prices.ts'
 
 export interface Summary {
@@ -50,12 +50,11 @@ export function wakeCostUsd(e: LedgerEntry, prices: PriceTable): number {
 }
 
 /**
- * Logs a ping's cost entry and adds its price to the session's running total, which the
- * status line shows. Every entry `summarize` counts in `pingCostUsd` goes through here,
- * so the session's total and the report's agree.
+ * Adds a ping's price to the session's running total, which the status line shows.
+ * INVARIANT: every ledger entry `summarize` counts in `pingCostUsd` is priced here too, so the
+ * session's total and the report's agree.
  */
-export function logPingCost(home: string, session: { pingCostUsd?: number }, e: LedgerEntry, prices: PriceTable): void {
-  appendLedger(home, e)
+export function addPingCost(session: { pingCostUsd?: number }, e: LedgerEntry, prices: PriceTable): void {
   session.pingCostUsd = (session.pingCostUsd ?? 0) + wakeCostUsd(e, prices)
 }
 

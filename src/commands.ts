@@ -4,7 +4,7 @@ import type { Config } from './config.ts'
 import { handoffMessage, interceptPrompt, requestHandoff, settleHandoff, wantsHandoff, type HandoffIO } from './handoff.ts'
 import { appendLedger, type RefusalReason } from './ledger.ts'
 import { takeNotices } from './notices.ts'
-import { logPingCost, turnPrices } from './report.ts'
+import { addPingCost, turnPrices } from './report.ts'
 import { statusReport } from './inspect.ts'
 import { decide, isAtKeyboard } from './policy.ts'
 import {
@@ -166,7 +166,7 @@ export function record(input: HookInput, ctx: Ctx): number {
       const denom = usage.cacheRead + usage.cacheWrite
       const hit = denom > 0 && usage.cacheRead / denom >= hitRatio
       if (!manual && !handoffTurn) state.lastPingHit = hit
-      logPingCost(home, state, {
+      const entry = {
         t: iso(ctx.now),
         sessionId: sid,
         event: manual ? 'manual-ping' : hit ? 'wake-hit' : 'wake-miss',
@@ -177,7 +177,9 @@ export function record(input: HookInput, ctx: Ctx): number {
         cacheRead: usage.cacheRead,
         cacheWrite: usage.cacheWrite,
         outputTokens: usage.outputTokens,
-      }, ctx.config.prices)
+      } as const
+      addPingCost(state, entry, ctx.config.prices)
+      appendLedger(home, entry)
     }
   }
 
@@ -208,6 +210,18 @@ export function record(input: HookInput, ctx: Ctx): number {
 
 /** A ping sent this recently and not scored yet is still on its way: a second one would double it. */
 export const PING_IN_FLIGHT_MS = 10 * 60_000
+/** The longest a manual fork takes, the mod's timeout and the CLI calls around it included. */
+export const MANUAL_FORK_MAX_MS = 140_000
+
+/**
+ * Whether an open ping still blocks another. A band press's fork is closed by `forked` within
+ * MANUAL_FORK_MAX_MS or never (the CLI call after it failed, and no turn follows to close it), so
+ * it stops blocking then, not after the window a wake turn may need.
+ */
+export function pingInFlight(state: SessionState, now: number): boolean {
+  if (!state.pendingPing) return false
+  return now - (state.lastPingAt ?? 0) < (state.pingButton ? MANUAL_FORK_MAX_MS : PING_IN_FLIGHT_MS)
+}
 
 /** `ping` and `handoff` arrive already recorded, the caller only delivers them; `retryInSec` is for the mod's timer. */
 export type WakeOutcome = { kind: 'none'; retryInSec?: number } | { kind: 'ping' } | { kind: 'handoff'; message: string }
@@ -231,7 +245,7 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
   if (!enabled || !sid) return { kind: 'none' }
   const state = loadSession(home, sid)
   if (!state || state.lastTurnEndAt === undefined) return { kind: 'none' }
-  if (state.pendingPing && ctx.now - (state.lastPingAt ?? 0) < PING_IN_FLIGHT_MS) return { kind: 'none' }
+  if (pingInFlight(state, ctx.now)) return { kind: 'none' }
   // INVARIANT: a turn held open by a question (fork.ts waitStart) takes only forks: a wake turn or a handoff would land inside it.
   if (state.waitingSince !== undefined && transport === 'turn') return { kind: 'none' }
 
@@ -287,6 +301,7 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
     state.pendingPing = true
     state.pingTransport = 'turn'
     delete state.pingManual
+    delete state.pingButton
     state.handoffRequested = true
     state.handoffPending = true
     state.lastPingAt = ctx.now
@@ -312,6 +327,7 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
   state.pingTransport = transport
   delete state.forkRetries
   delete state.pingManual
+  delete state.pingButton
   state.pingsSoFar += 1
   state.lastPingAt = ctx.now
   saveSession(home, state)

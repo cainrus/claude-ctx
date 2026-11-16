@@ -87,6 +87,40 @@ test('manualPing: a refusal is answered without a fork', async () => {
   assert.ok(loadSession(home, SID)!.gateTurnAt !== undefined, "the refusal's turn is the mod's")
 })
 
+test('manualPing from the band: a failed fork is said and closed; a hit re-arms the timer from the press', async () => {
+  const failed = session()
+  const { $: f } = fakeEngine(failed.home, { isAnswered: false, reason: 'api-error' })
+  assert.equal(await manualPing(f, true), 'cache-keeper: no ping sent: the fork failed (api-error).')
+  const s = loadSession(failed.home, SID)!
+  assert.equal(s.pendingPing, false)
+  assert.equal(s.gateTurnAt, undefined)
+
+  const hit = session()
+  const armed: number[] = []
+  const { $: h } = fakeEngine(hit.home, HIT)
+  h.clock.after = (ms: number) => {
+    armed.push(ms)
+    return { cancel() {} }
+  }
+  assert.match((await manualPing(h, true))!, /^cache-keeper: pinged\./)
+  // The first timer is the fork's own timeout; the last one is the next ping, timed from the press.
+  assert.equal(armed.at(-1), hit.config.delaySec * 1000)
+  assert.equal(loadSession(hit.home, SID)!.gateTurnAt, undefined)
+
+  // The fork went out but `forked` could not run: the ping stays open, so look again once it stops blocking.
+  const lost = session()
+  const late: number[] = []
+  const { $: l } = fakeEngine(lost.home, HIT)
+  const run = l.process.run
+  l.process.run = async (argv: string[], opts: { stdin: string }) => (argv.at(-1) === 'forked' ? { exitCode: 1, stdout: '' } : run(argv, opts))
+  l.clock.after = (ms: number) => {
+    late.push(ms)
+    return { cancel() {} }
+  }
+  assert.equal(await manualPing(l, true), 'cache-keeper: pinged, but keeper could not record it.')
+  assert.equal(late.at(-1), 150_000)
+})
+
 test('manualPing: a failed fork lets the turn reach the model, and its Stop logs the ping as manual', async () => {
   const { home, config, transcript } = session()
   const { $ } = fakeEngine(home, { isAnswered: false, reason: 'api-error' })
