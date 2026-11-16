@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { DONE_COMMAND, DONE_REPLY, end, isDoneCommand, isWakePrompt, record, touch, TRANSCRIPT_CATCH_UP_MS, wake, WAKE_MESSAGE } from '../src/commands.ts'
 import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
+import { rateFor } from '../src/prices.ts'
 import { loadAwayBudget, loadSession, newSession, saveAwayBudget, saveSession } from '../src/state.ts'
 import { assistantLine, configFor, FIXTURES, makeCtx, MIN, SID, tempHome, writeTranscript } from './helpers.ts'
 
@@ -29,6 +30,15 @@ test('record: cache age starts at the last assistant entry, not at the hook cloc
   assert.equal(s.lastTurnEndAt, T0)
   assert.equal(s.ctxTokens, 5 + BIG.read + BIG.write)
   assert.equal(s.model, 'claude-opus-4-5')
+})
+
+test('record: prices the next turn at this context for the status line, warm read and cold write', () => {
+  const { home, config } = setup()
+  const s = loadSession(home, SID)!
+  const r = rateFor(s.model, config.prices, s.ctxTokens)
+  assert.equal(s.warmTurnUsd, (s.ctxTokens * r.cacheRead) / 1e6)
+  assert.equal(s.coldTurnUsd, (s.ctxTokens * r.cacheWrite) / 1e6)
+  assert.ok(s.coldTurnUsd! > s.warmTurnUsd!)
 })
 
 test('record: an entry older than the last prompt means the transcript lags — use now', () => {

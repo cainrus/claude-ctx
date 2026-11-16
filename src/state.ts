@@ -19,6 +19,11 @@ export interface SessionState {
   /** A wake was sent and its closing Stop has not been recorded yet. */
   pendingPing: boolean
   lastPingHit: boolean | null
+  /** USD this session's pings cost so far, as the report prices them. */
+  pingCostUsd?: number
+  /** USD the next turn's prompt costs from a warm cache, and written into a cold one; set at each turn end. */
+  warmTurnUsd?: number
+  coldTurnUsd?: number
   /** Reset by a real prompt. */
   handoffRequested?: boolean
   /** The open wake is a handoff: its closing Stop checks the brief. */

@@ -11,6 +11,7 @@
 import { decideWake, PING_IN_FLIGHT_MS, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
 import { groupedTokens, hhmm, NOTHING_TO_HOLD } from './format.ts'
 import { appendLedger } from './ledger.ts'
+import { logPingCost } from './report.ts'
 import { closePing, compactedSinceRequest, forkOwns, loadSession, saveForkClaim, saveSession, warmUntilOf } from './state.ts'
 
 export const FORK_PROMPT = `${WAKE_MARKER} Reply with exactly "ok".`
@@ -228,16 +229,16 @@ export function forked(input: ForkInput, ctx: Ctx): number {
 
   if (manual) {
     state.gateTurnAt = ctx.now
+    logPingCost(home, state, { ...base, event: 'manual-ping', transport: 'fork', ...usage }, ctx.config.prices)
     saveSession(home, state)
-    appendLedger(home, { ...base, event: 'manual-ping', transport: 'fork', ...usage })
     return answer(ctx, { action: 'none', dueInSec: delaySec, text: manualPingText(usage, ctx.now + ctx.config.cacheTtlSec * 1000) })
   }
 
   const denom = usage.cacheRead + usage.cacheWrite + usage.inputTokens
   const hit = denom > 0 && usage.cacheRead / denom >= hitRatio
   state.lastPingHit = hit
+  logPingCost(home, state, { ...base, event: hit ? 'wake-hit' : 'wake-miss', transport: 'fork', ...usage }, ctx.config.prices)
   saveSession(home, state)
-  appendLedger(home, { ...base, event: hit ? 'wake-hit' : 'wake-miss', transport: 'fork', ...usage })
   return answer(ctx, { action: 'none', dueInSec: delaySec })
 }
 

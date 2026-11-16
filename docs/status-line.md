@@ -15,10 +15,10 @@ line carries errors only (`"band": false` keeps it here).
 Every form it takes, printed by the real `format()`:
 
 <!-- gen:status-lines -->
-- `ready`: keeper is on; nothing has been sent in this session yet.
-- `cached till 14:05 · renews ×3`: the cache stays warm until 14:05, and keeper can extend it; 3 is how many pings it has left in this stretch. A ping still needs you back within `awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all.
-- `cached till 14:05`: no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final.
-- `cache expired`: the cache went cold; the next turn rewrites the whole context.
+- `○ ready`: keeper is on; nothing has been sent in this session yet.
+- `◉ 14:05→~16:35  $0.17+$0.05+$0.15`: the cache stays warm until 14:05 for sure, and keeper can extend it: if every ping left in this stretch (3 here) goes out, it holds until about 16:35. That end is the earliest one: a ping goes out once the cache is `minAgeSec` old (50 min) and renews it from then. The money: $0.17 this session's pings cost so far, $0.05 the next turn's prompt read from this cache, $0.15 the pings left (each a read of the context). A ping still needs you back within `awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all.
+- `◉ 14:05  $0.17+$0.05`: no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final.
+- `○ cold · next $0.98`: the cache went cold; the next turn writes the whole context anew, at $0.98.
 - `error: needs Node.js ≥ 22.18`: `node` on `PATH` is missing or too old to run the hooks, so keeper does nothing.
 - `error: record failed · ~/.claude-cache-keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/cache-keeper:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
 - `(nothing)`: keeper is off, or `"statusLine": false`.
@@ -37,10 +37,11 @@ the session's next prompt gets one notice, at most once an hour.
 
 <!-- gen:module hooks/band.ts -->
 Where the mod loads, the status line moves above the prompt as a row of
-buttons, `◉ 14:05 ↻3 ✓ ?`, and the status line keeps errors only:
+buttons, `◉ 14:05→~16:35 ↻3 $0.17+$0.05+$0.15 ✓ ?`, and the status line keeps
+errors only:
 
-- `◉ 14:05`: warm till 14:05 (`○ ready`, `○ cache expired` as above); `final`
-  after it when no ping is coming.
+- `◉ 14:05→~16:35` and the money after it: as on the status line above;
+  `final` in place of the button when no ping is coming.
 - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
   3 pings are left. Dim while a turn runs.
 - `✓`: press to stop keeping this session, as `/cache-keeper:done` does;

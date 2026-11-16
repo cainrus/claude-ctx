@@ -4,6 +4,7 @@ import type { Config } from './config.ts'
 import { handoffMessage, interceptPrompt, requestHandoff, settleHandoff, wantsHandoff, type HandoffIO } from './handoff.ts'
 import { appendLedger, type RefusalReason } from './ledger.ts'
 import { takeNotices } from './notices.ts'
+import { logPingCost, turnPrices } from './report.ts'
 import { statusReport } from './inspect.ts'
 import { decide, isAtKeyboard } from './policy.ts'
 import {
@@ -151,6 +152,7 @@ export function record(input: HookInput, ctx: Ctx): number {
   if (usage) {
     state.ctxTokens = usage.ctxTokens
     if (usage.model) state.model = usage.model
+    Object.assign(state, turnPrices(state.ctxTokens, state.model, ctx.config.prices))
   }
 
   // INVARIANT: only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook
@@ -164,7 +166,7 @@ export function record(input: HookInput, ctx: Ctx): number {
       const denom = usage.cacheRead + usage.cacheWrite
       const hit = denom > 0 && usage.cacheRead / denom >= hitRatio
       if (!manual && !handoffTurn) state.lastPingHit = hit
-      appendLedger(home, {
+      logPingCost(home, state, {
         t: iso(ctx.now),
         sessionId: sid,
         event: manual ? 'manual-ping' : hit ? 'wake-hit' : 'wake-miss',
@@ -175,7 +177,7 @@ export function record(input: HookInput, ctx: Ctx): number {
         cacheRead: usage.cacheRead,
         cacheWrite: usage.cacheWrite,
         outputTokens: usage.outputTokens,
-      })
+      }, ctx.config.prices)
     }
   }
 

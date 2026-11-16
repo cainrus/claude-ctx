@@ -6,29 +6,63 @@ import { decide, THRESHOLDS } from '../src/policy.ts'
 const T = 1_800_000_000_000
 const MIN = 60_000
 const session = (over: Record<string, unknown> = {}) => ({ ctxTokens: 50_000, pingsSoFar: 1, lastTurnEndAt: T, ...over })
-const cached = (left: number, ext: boolean, warmUntil: number) => ({ kind: 'cached' as const, left, extends: ext, warmUntil })
+/** The default the status line assumes, minutes: the policy's own, written out to catch drift. */
+const DEFAULT_MIN_AGE_MIN = 50
+const PING_EVERY = DEFAULT_MIN_AGE_MIN * MIN
+/** A line as lineOf builds it: with pings coming, each one left holds the cache PING_EVERY longer. */
+const cached = (left: number, ext: boolean, warmUntil: number, pingsUsd = 0) => ({
+  kind: 'cached' as const,
+  left,
+  extends: ext,
+  warmUntil,
+  heldUntil: ext ? warmUntil + left * PING_EVERY : warmUntil,
+  pingsUsd,
+})
 const pick = (l: ReturnType<typeof lineOf>) => {
   assert.equal(l?.kind, 'cached')
   return l as ReturnType<typeof cached>
 }
 
-test('a warm cache with pings left extends, and shows how many are left', () => {
+test('a warm cache with pings left shows the sure end and how far the pings can hold it', () => {
   const l = lineOf(session(), { maxPings: 4 }, {}, T + 10 * MIN)
   assert.deepEqual(l, cached(3, true, T + 60 * MIN))
-  assert.equal(format(l!, 0), 'cached till 09:00 · renews ×3')
+  // 3 pings, each at 50 min of cache age: 09:00 + 3 × 50 min.
+  assert.equal(format(l!, 0), '◉ 09:00→~11:30')
 })
 
-test('two-digit counts print as they are', () => {
-  assert.equal(format(cached(12, true, T), 0), 'cached till 08:00 · renews ×12')
+test('the money: spent on pings, the next turn read warm, and the pings left; cold, the next turn written anew', () => {
+  const s = session({ pingCostUsd: 0.17, warmTurnUsd: 0.05, coldTurnUsd: 0.98 })
+  const l = pick(lineOf(s, { maxPings: 4 }, {}, T + 10 * MIN))
+  assert.equal(l.holdUsd, 3 * 0.05)
+  assert.equal(format(l, 0), '◉ 09:00→~11:30  $0.17+$0.05+$0.15')
+  // Final: nothing to hold, so the third sum is left out.
+  assert.equal(format(lineOf({ ...s, pingsSoFar: 4 }, { maxPings: 4 }, {}, T)!, 0), '◉ 09:00  $0.17+$0.05')
+  assert.equal(format(cached(0, false, T, 0), 0), '◉ 08:00', 'a record from before the prices: no money shown')
+  const cold = lineOf(s, {}, {}, T + 60 * MIN)
+  assert.deepEqual(cold, { kind: 'expired', nextColdUsd: 0.98 })
+  assert.equal(format(cold!, 0), '○ cold · next $0.98')
 })
 
-test('the time is local: the offset is applied', () => {
+test('the far end is the earliest one: each ping adds minAgeSec, from env, config.json or the default', () => {
+  assert.equal(pick(lineOf(session(), { maxPings: 2 }, {}, T)).heldUntil, T + 60 * MIN + 50 * MIN)
+  assert.equal(pick(lineOf(session(), { maxPings: 2, minAgeSec: 40 * 60 }, {}, T)).heldUntil, T + 60 * MIN + 40 * MIN)
+  assert.equal(pick(lineOf(session(), { maxPings: 2, minAgeSec: 40 * 60 }, { minAgeSec: '1800' }, T)).heldUntil, T + 60 * MIN + 30 * MIN)
+  assert.equal(DEFAULT_MIN_AGE_MIN * 60, THRESHOLDS.minAgeSec, 'the line copies keeper policy, keep them equal')
+})
+
+test('the time is local: the offset is applied to both ends', () => {
   // getTimezoneOffset() is UTC − local in minutes: −120 is UTC+2.
-  assert.equal(format(cached(1, true, T), -120), 'cached till 10:00 · renews ×1')
+  assert.equal(format(cached(1, true, T), -120), '◉ 10:00→~10:50')
+})
+
+test("the session's ping cost reads from its record, at a cent's precision", () => {
+  assert.equal(format({ ...cached(1, true, T, 0.134), nextWarmUsd: 0.051, holdUsd: 0.051 }, 0), '◉ 08:00→~08:50  $0.13+$0.05+$0.05')
+  assert.equal(pick(lineOf(session({ pingCostUsd: 0.2 }), {}, {}, T)).pingsUsd, 0.2)
+  assert.equal(pick(lineOf(session({ pingCostUsd: 'x' }), {}, {}, T)).pingsUsd, 0)
 })
 
 test('no ping left, a small context or a muted session make the deadline final', () => {
-  assert.equal(format(lineOf(session({ pingsSoFar: 4 }), { maxPings: 4 }, {}, T)!, 0), 'cached till 09:00')
+  assert.equal(format(lineOf(session({ pingsSoFar: 4 }), { maxPings: 4 }, {}, T)!, 0), '◉ 09:00')
   assert.equal(pick(lineOf(session({ ctxTokens: 1000 }), {}, {}, T)).extends, false)
   assert.equal(pick(lineOf(session({ doneAt: T }), {}, {}, T)).extends, false)
   assert.equal(pick(lineOf(session({ lastPingHit: false }), {}, {}, T)).extends, false)
@@ -56,13 +90,13 @@ test('without a cap in env or config.json, the tuned one counts', () => {
 test('before anything was sent, keeper says it is ready', () => {
   assert.deepEqual(lineOf(undefined, {}, {}, T), { kind: 'ready' })
   assert.deepEqual(lineOf({ pingsSoFar: 0 }, {}, {}, T), { kind: 'ready' })
-  assert.equal(format({ kind: 'ready' }, 0), 'ready')
+  assert.equal(format({ kind: 'ready' }, 0), '○ ready')
 })
 
 test('a request in the first turn, before any record, is cached with no renewal promised', () => {
   const l = lineOf(undefined, {}, {}, T + 5 * MIN, undefined, T)
   assert.deepEqual(l, cached(4, false, T + 60 * MIN))
-  assert.equal(format(l!, 0), 'cached till 09:00')
+  assert.equal(format(l!, 0), '◉ 09:00')
   assert.deepEqual(lineOf(undefined, {}, {}, T + 60 * MIN, undefined, T), { kind: 'expired' })
 })
 
@@ -76,7 +110,7 @@ test('a request newer than the record moves the deadline; an older one does not'
 test('a cold cache after a turn says so', () => {
   assert.deepEqual(lineOf(session(), {}, {}, T + 60 * MIN), { kind: 'expired' })
   assert.deepEqual(lineOf(session(), { cacheTtlSec: 300 }, {}, T + 6 * MIN), { kind: 'expired' })
-  assert.equal(format({ kind: 'expired' }, 0), 'cache expired')
+  assert.equal(format({ kind: 'expired' }, 0), '○ cold')
 })
 
 test('nothing is shown when off or disabled', () => {

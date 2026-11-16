@@ -1,9 +1,10 @@
 /**
  * Where the mod loads, the status line moves above the prompt as a row of
- * buttons, `◉ 14:05 ↻3 ✓ ?`, and the status line keeps errors only:
+ * buttons, `◉ 14:05→~16:35 ↻3 $0.17+$0.05+$0.15 ✓ ?`, and the status line keeps
+ * errors only:
  *
- * - `◉ 14:05`: warm till 14:05 (`○ ready`, `○ cache expired` as above); `final`
- *   after it when no ping is coming.
+ * - `◉ 14:05→~16:35` and the money after it: as on the status line above;
+ *   `final` in place of the button when no ping is coming.
  * - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
  *   3 pings are left. Dim while a turn runs.
  * - `✓`: press to stop keeping this session, as `/cache-keeper:done` does;
@@ -15,8 +16,10 @@
  */
 
 import type { EngineInterface as $ } from 'claude-code'
+// WARNING: status.ts imports this module too. Use its functions at call time only: a const of it read while
+// this module loads is not initialised yet.
 // @ts-ignore TS5097
-import type { Line } from './status.ts'
+import { costText, format, type Line, timeText } from './status.ts'
 // @ts-ignore TS5097
 import { manualPing } from './keepalive.ts'
 
@@ -28,7 +31,12 @@ export interface BandView {
   muted: boolean
 }
 
-export const LEGEND = '◉ warm till · ○ cold or not started · ↻N ping now (N left) · final: no ping is coming · ✓ stop keeping this session · ? this legend'
+export const LEGEND = [
+  '◉ 14:05→~16:35  warm till 14:05 for sure, till about 16:35 if every ping left goes out; `final`: no ping is coming',
+  '$a+$b+$c  a: this session\'s pings so far · b: the next turn read from this cache · c: the pings left',
+  '○ cold · next $X  the next turn writes the whole context anew, at $X',
+  '↻N ping now (N left) · ✓ stop keeping this session · ? pin this legend',
+].join('\n')
 
 /** Whether the band replaces the status line. */
 export function bandOn(config: Record<string, unknown>): boolean {
@@ -38,19 +46,15 @@ export function bandOn(config: Record<string, unknown>): boolean {
 /** One piece of the row: plain text, or a button by its key. */
 export type Part = { text: string; dim?: boolean } | { key: 'ping' | 'done' | 'help'; label: string }
 
-const hhmm = (at: number, offsetMin: number): string => {
-  const local = new Date(at - offsetMin * 60_000)
-  return `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`
-}
-
 /** The row, pure so the tests can drive it. `working`: a turn runs, so no ping button. */
 export function partsOf(v: BandView, working: boolean): Part[] {
   const help: Part = { key: 'help', label: '?' }
-  if (v.line.kind === 'ready') return [{ text: '○ ready' }, help]
-  if (v.line.kind === 'expired') return [{ text: '○ cache expired' }, help]
-  const parts: Part[] = [{ text: `◉ ${hhmm(v.line.warmUntil, v.offsetMin)}` }]
+  if (v.line.kind !== 'cached') return [{ text: format(v.line, v.offsetMin) }, help]
+  const parts: Part[] = [{ text: timeText(v.line, v.offsetMin) }]
   if (v.line.extends) parts.push(working ? { text: `↻${v.line.left}`, dim: true } : { key: 'ping', label: `↻${v.line.left}` })
   else parts.push({ text: 'final', dim: true })
+  const cost = costText(v.line)
+  if (cost !== undefined) parts.push({ text: cost, dim: true })
   parts.push(v.muted ? { text: '✓ done', dim: true } : { key: 'done', label: '✓' })
   parts.push(help)
   return parts

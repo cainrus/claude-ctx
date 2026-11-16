@@ -7,7 +7,7 @@
  */
 
 import type { Config } from './config.ts'
-import { type LedgerEntry, REFUSAL_REASONS, type RefusalReason } from './ledger.ts'
+import { appendLedger, type LedgerEntry, REFUSAL_REASONS, type RefusalReason } from './ledger.ts'
 import { type PriceTable, PRICES_AS_OF, promptOf, rateFor, requestUsd, rowFor } from './prices.ts'
 
 export interface Summary {
@@ -47,6 +47,25 @@ const tok = (v: number | undefined) => (typeof v === 'number' && Number.isFinite
 /** Also for a fork or a manual ping. */
 export function wakeCostUsd(e: LedgerEntry, prices: PriceTable): number {
   return requestUsd(e, rateFor(e.model, prices, promptOf(e)))
+}
+
+/**
+ * Logs a ping's cost entry and adds its price to the session's running total, which the
+ * status line shows. Every entry `summarize` counts in `pingCostUsd` goes through here,
+ * so the session's total and the report's agree.
+ */
+export function logPingCost(home: string, session: { pingCostUsd?: number }, e: LedgerEntry, prices: PriceTable): void {
+  appendLedger(home, e)
+  session.pingCostUsd = (session.pingCostUsd ?? 0) + wakeCostUsd(e, prices)
+}
+
+/**
+ * What the next turn's prompt costs at this context, for the status line: read from a warm cache, or written
+ * again into a cold one (1h TTL). Output and the new prompt are left out: the same either way.
+ */
+export function turnPrices(ctxTokens: number, model: string | undefined, prices: PriceTable): { warmTurnUsd: number; coldTurnUsd: number } {
+  const r = rateFor(model, prices, ctxTokens)
+  return { warmTurnUsd: requestUsd({ cacheRead: ctxTokens }, r), coldTurnUsd: requestUsd({ cacheWrite: ctxTokens }, r) }
 }
 
 /** Estimate for a resumed-while-warm stretch: a full 1h rewrite of the context, minus the read it would pay instead. */

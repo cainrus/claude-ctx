@@ -21,7 +21,7 @@ const g = globalThis as Record<string, unknown>
 g.h = (tag: { name: string }, props: Record<string, unknown> | null, ...children: unknown[]): Node => ({ tag: tag.name, props: props ?? {}, children })
 
 const view = (over: Partial<BandView> = {}, line: Partial<Extract<BandView['line'], { kind: 'cached' }>> = {}): BandView => ({
-  line: { kind: 'cached', left: 3, extends: true, warmUntil: T, ...line },
+  line: { kind: 'cached', left: 3, extends: true, warmUntil: T, heldUntil: T, pingsUsd: 0, ...line },
   offsetMin: 0,
   muted: false,
   ...over,
@@ -36,6 +36,11 @@ test('the row: time, pings left, done and the legend button', () => {
   ])
 })
 
+test('the row carries the range and the money as the status line prints them', () => {
+  const parts = partsOf(view({}, { heldUntil: T + 150 * 60_000, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0.15 }), false)
+  assert.deepEqual(parts.slice(0, 3), [{ text: '◉ 08:00→~10:30' }, { key: 'ping', label: '↻3' }, { text: '$0.17+$0.05+$0.15', dim: true }])
+})
+
 test('no ping coming reads final; a running turn holds the ping button back', () => {
   assert.deepEqual(partsOf(view({}, { extends: false }), false)[1], { text: 'final', dim: true })
   assert.deepEqual(partsOf(view(), true)[1], { text: '↻3', dim: true })
@@ -43,7 +48,8 @@ test('no ping coming reads final; a running turn holds the ping button back', ()
 
 test('a muted session shows done, not a button; cold and fresh lines have only the legend', () => {
   assert.deepEqual(partsOf(view({ muted: true }, { extends: false }), false)[2], { text: '✓ done', dim: true })
-  assert.deepEqual(partsOf(view({ line: { kind: 'expired' } }), false), [{ text: '○ cache expired' }, { key: 'help', label: '?' }])
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired' } }), false), [{ text: '○ cold' }, { key: 'help', label: '?' }])
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98 } }), false), [{ text: '○ cold · next $0.98' }, { key: 'help', label: '?' }])
   assert.deepEqual(partsOf(view({ line: { kind: 'ready' } }), false), [{ text: '○ ready' }, { key: 'help', label: '?' }])
 })
 

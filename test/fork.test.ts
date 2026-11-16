@@ -20,6 +20,7 @@ import {
 } from '../src/fork.ts'
 import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
+import { wakeCostUsd } from '../src/report.ts'
 import { forkClaimPath, loadForkClaim, loadSession, saveForkClaim, saveSession } from '../src/state.ts'
 import { configFor, makeCtx, MIN, SID, tempHome, writeTranscript, type TestCtx } from './helpers.ts'
 
@@ -179,6 +180,9 @@ test('forked: a read of the prefix is a hit; the next ping is timed from the for
   assert.equal(hit.transport, 'fork')
   assert.equal(hit.cacheRead, 91_000)
   assert.equal(hit.cacheWrite, 300)
+  // The status line's running total is the report's price of the same entry.
+  assert.ok(s.pingCostUsd! > 0)
+  assert.equal(s.pingCostUsd, wakeCostUsd(hit, config.prices))
 })
 
 test('forked: a full rewrite is a miss, which mutes the session as a wake miss does', () => {
@@ -207,8 +211,12 @@ test('forked: a fork with no reply falls back to the wake turn, which record the
   touch({ session_id: SID, prompt: WAKE_MESSAGE }, ctxAt(config, at + 1500))
   writeTranscript(home, [{ at: T0, ...BIG }, { at: at + 3000, read: 91_000, write: 200 }])
   record({ session_id: SID, transcript_path: transcript, stop_hook_active: true }, makeCtx(config, at + 3500))
-  assert.equal(readLedger(home).at(-1)!.event, 'wake-hit')
-  assert.equal(loadSession(home, SID)!.pendingPing, false)
+  const scored = readLedger(home).at(-1)!
+  assert.equal(scored.event, 'wake-hit')
+  const s = loadSession(home, SID)!
+  assert.equal(s.pendingPing, false)
+  // A wake turn is priced into the session's total too, not only a fork.
+  assert.equal(s.pingCostUsd, wakeCostUsd(scored, config.prices))
 })
 
 const TIMEOUT: ForkResult = { isAnswered: false, reason: 'timeout' }
