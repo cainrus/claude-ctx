@@ -2,4 +2,5 @@ node_modules/
 .DS_Store
 *.log
 coverage/
-.claude/
+.claude/*
+!.claude/CLAUDE.md
