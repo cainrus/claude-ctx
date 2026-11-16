@@ -1,11 +1,4 @@
-/**
- * The last main-thread assistant `usage` of a Claude Code JSONL transcript.
- *
- * Transcripts grow to tens of megabytes, so the file is read from the end in
- * growing chunks until a qualifying line turns up. Sidechain (subagent) lines
- * and synthetic entries are skipped: their usage is not the main conversation's
- * cache.
- */
+/** Main-thread assistant `usage` read from a Claude Code JSONL transcript. */
 
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs'
 
@@ -17,13 +10,13 @@ export interface TurnUsage {
   /** input + cache read + cache write: the size of the cached prefix. */
   ctxTokens: number
   model?: string
-  /** Epoch ms of the transcript entry, when it carries a parseable timestamp. */
+  /** Epoch ms of the transcript entry. */
   timestamp?: number
 }
 
 const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 
-/** Parse one transcript line; undefined unless it is a main-thread assistant turn with usage. */
+/** Undefined unless the line is a main-thread assistant turn with usage. */
 export function usageFromLine(line: string): TurnUsage | undefined {
   if (!line.includes('"usage"')) return undefined
   let rec: any
@@ -32,6 +25,7 @@ export function usageFromLine(line: string): TurnUsage | undefined {
   } catch {
     return undefined
   }
+  // INVARIANT: sidechain (subagent) and synthetic entries are skipped: their usage is not the main thread's cache.
   if (!rec || rec.type !== 'assistant' || rec.isSidechain === true || rec.isApiErrorMessage === true) return undefined
   const msg = rec.message
   const u = msg?.usage
@@ -41,7 +35,7 @@ export function usageFromLine(line: string): TurnUsage | undefined {
   const inputTokens = n(u.input_tokens)
   const cacheRead = n(u.cache_read_input_tokens)
   const cacheWrite = n(u.cache_creation_input_tokens)
-  // No request reached the cache (an error turn under another name): reading it would zero the context.
+  // WORKAROUND: an error turn under another name has all-zero usage; reading it would zero the context.
   if (inputTokens + cacheRead + cacheWrite === 0) return undefined
   const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
   return {
@@ -55,11 +49,6 @@ export function usageFromLine(line: string): TurnUsage | undefined {
   }
 }
 
-/**
- * Visit main-thread usages from the end of the transcript, newest first, until
- * `visit` returns true. Reads in growing chunks; the first line of a partial
- * window is probably cut, so it is left whole to the next, larger window.
- */
 function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: TurnUsage) => boolean): void {
   let fd: number
   try {
@@ -81,7 +70,6 @@ function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: 
         if (u && visit(u)) return
       }
       if (start === 0) return
-      // Byte offset, not decoded length: the cut may split a multi-byte character.
       const firstBreak = buf.indexOf(0x0a)
       end = start + (firstBreak < 0 ? buf.length : firstBreak)
       chunk *= 4
@@ -102,12 +90,9 @@ export function lastMainUsage(transcriptPath: string, initialChunk = 256 * 1024)
   return last
 }
 
-/**
- * The FIRST main-thread request at or after `sinceMs`: what a resumed turn paid
- * for the prefix the keeper held. The turn's last request is no use here: when
- * the first one rewrote the context, every later one reads that fresh write and
- * looks like a hit. Entries without a timestamp are skipped.
- */
+/** The first main-thread request at or after `sinceMs`: what a resumed turn paid for the held prefix. */
+// WARNING: the first, not the last: when the first request rewrote the context, every later one reads that
+// fresh write and looks like a hit.
 export function firstMainUsageSince(transcriptPath: string, sinceMs: number, initialChunk = 256 * 1024): TurnUsage | undefined {
   let first: TurnUsage | undefined
   scanBackwards(transcriptPath, initialChunk, (u) => {

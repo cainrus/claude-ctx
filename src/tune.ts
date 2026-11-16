@@ -1,21 +1,9 @@
 /**
- * Auto-tuning of `maxPings`, the per-stretch cap.
- *
- * The k-th ping of an idle stretch pays off when the session comes back while
- * that ping's cache is still warm. Its price is the wake turn; its payoff is
- * the rewrite the resume did not have to pay. So the ping at position k is
- * worth sending while
- *
- *   P(warm resume right after the k-th ping | the k-th ping was sent) >= breakeven
- *
- * where breakeven = wake cost / rewrite avoided, both measured from the ledger.
- *
- * Nothing above the cap is ever observed, so the cap can only learn by trying
- * one more: it goes up a step when its last ping still clears breakeven with
- * a wide margin, and down a step when that ping no longer clears it at all.
- * One step per day at most, inside [MIN, MAX], and only on enough samples.
- *
- * `decideCap` is pure; `tunedMaxPings` adds the clock and the file.
+ * Moves `maxPings`, the pings per idle stretch, by the ledger, unless you set `maxPings` yourself. The k-th ping
+ * is worth sending while you come back warm right after it more often than breakeven (wake cost / rewrite avoided,
+ * both measured from the ledger). Once a day, with at least 30 pings at the cap's position in the last 60 days,
+ * the cap goes up a step when that position kept 2× breakeven warm and down a step below breakeven, within [2, 8].
+ * The decision is kept in `$CACHE_KEEPER_HOME/tuning.json`; `cache-keeper report` prints the cap and why.
  */
 
 import { join } from 'node:path'
@@ -30,7 +18,7 @@ export const TUNE = Object.freeze({
   max: 8,
   /** Pings sent at the cap's position before a step is taken. */
   minSamples: 30,
-  /** Going up needs this many times breakeven: the step is a bet on data nobody has yet. */
+  /** Going up needs this many times breakeven. */
   raiseMargin: 2,
   /** Used until the ledger has a scored wake turn. */
   defaultBreakeven: 0.06,
@@ -49,8 +37,8 @@ export interface PositionStats {
 
 export interface CapDecision {
   maxPings: number
-  /** 'up' / 'down' / 'hold', and why, for the report. */
   step: 'up' | 'down' | 'hold'
+  /** Shown in the report. */
   why: string
 }
 
@@ -65,11 +53,6 @@ export interface Tuning extends CapDecision {
 const tok = (v: number | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`
 
-/**
- * Pings sent and warm resumes per position. A ping line carries its position
- * (`pings`) since 0.5; older lines are numbered by counting per session since
- * that session's last resume.
- */
 export function positionStats(entries: LedgerEntry[], cacheTtlSec: number): PositionStats[] {
   const sent = new Map<number, number>()
   const warm = new Map<number, number>()
@@ -139,7 +122,6 @@ export function tunedMaxPings(config: Pick<Config, 'home' | 'cacheTtlSec'> & Par
   try {
     writeJsonAtomic(tuningPath(config.home), next)
   } catch {
-    // a read-only home: use the answer, recompute next time
   }
   return next.maxPings
 }

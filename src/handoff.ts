@@ -1,38 +1,12 @@
 /**
- * Handoff: when the keeper is about to let a session's cache go, spend one
- * last warm turn on a brief — and, when the human comes back to a cold cache,
- * let them choose where to continue before anything reaches the model.
- *
- * The keeper stops pinging for good reasons (the human is away for hours, the
- * ping budget is spent), and the next real prompt then pays a full cache
- * rewrite of the whole context. At that moment the cache is still warm, so a
- * brief costs a cache read plus its own output. The transcript is not touched.
- *
- *   1. wake    the refusal turns into one more wake: write a brief for a NEW
- *              session to `handoffs/<session>.md`
- *   2. record  the Stop closing that wake: brief on disk -> `ready`, else
- *              `failed` with a one-shot notice
- *   3. touch   a real prompt while `ready`:
- *                cache still warm -> passes, the brief is retired (`used`)
- *                cache cold       -> blocked: the model is not called, the
- *                                    text goes back to the input box and the
- *                                    menu below is shown
- *              after the menu:
- *                the same text again, `1` or `force` -> continue here
- *                `2` -> the configured spawn command starts a new session
- *                       from the brief plus the held message; on exit 0 this
- *                       session is closed a moment after the hook returns
- *                anything else -> held instead, the menu again
- *
- * `!` commands and slash commands do not go through UserPromptSubmit (measured
- * on Claude Code 2.1.301; skills do). The plugin's mod (hooks/gate.ts) asks the
- * same question where they do pass: before a model request (`turn.step`) and
- * before `/compact` (`session.compact`). The held "message" is then the turn's
- * first text or the command name.
- *
- *   handoffs/<session>.json            the record below
- *   handoffs/<session>.md              the brief the model wrote
- *   handoffs/<session>-continue.md     brief + held message, given to the spawn command
+ * Handoff: when keeper is about to let a large, still-warm cache die (you are away for hours, or the ping
+ * budget is spent), it spends one last warm turn on a brief for a new session, `handoffs/<session>.md`.
+ * It is a real turn (in the transcript, about two requests) and renews the cache for another hour.
+ * Back while the cache is still warm, nothing is asked. Back after it went
+ * cold, your prompt is held before it reaches the model and a menu offers: send it again (or `1`) to continue
+ * here, or `2` to start a new session from the brief plus your message (`handoff.spawnCommand`;
+ * `handoff.closeAfterSpawn` closes this one). Where the plugin's mod loads, `!` commands, slash commands and
+ * `/compact` are held the same way. Off by default: turn on with `handoff.enabled` or `CACHE_KEEPER_HANDOFF=1`.
  */
 
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -47,11 +21,9 @@ import { WAKE_REPLY } from './wake-text.ts'
 /** Refusals after which the keeper would let a still-warm cache die. */
 export const HANDOFF_REASONS: readonly RefusalReason[] = ['away', 'away-budget-spent', 'budget-spent', 'holder']
 
-/** Shorter than this is not a brief. */
 export const MIN_BRIEF_CHARS = 400
 
-/** Spawn output shown in the menu answer is cut to this. */
-const OUTPUT_CHARS = 600
+const SPAWN_OUTPUT_CHARS = 600
 
 export type HandoffStatus = 'requested' | 'ready' | 'used' | 'failed'
 
@@ -65,24 +37,20 @@ export interface HandoffRecord {
   briefPath: string
   readyAt?: number
   failure?: 'no-brief'
-  /** The prompt the menu is holding. */
   heldPrompt?: string
   menuShownAt?: number
   usedAt?: number
   /** warm = came back before the cache died; here / new = picked in the menu, or by `auto`. */
   choice?: 'warm' | 'here' | 'new'
   continuePath?: string
-  /**
-   * The session's holder asked for the handoff (`skipIf` exit 3): a prompt into the cold cache goes
-   * to a new session without the menu. The holder is a session, not a person at the input box.
-   */
+  /** The session's holder asked for the handoff (`skipIf` exit 3): a cold prompt goes to a new session without the menu. */
   auto?: true
 }
 
-const dir = (home: string) => join(home, 'handoffs')
-export const briefPath = (home: string, sid: string) => join(dir(home), `${sid}.md`)
-export const recordPath = (home: string, sid: string) => join(dir(home), `${sid}.json`)
-export const continuePath = (home: string, sid: string) => join(dir(home), `${sid}-continue.md`)
+const handoffDir = (home: string) => join(home, 'handoffs')
+export const briefPath = (home: string, sid: string) => join(handoffDir(home), `${sid}.md`)
+export const recordPath = (home: string, sid: string) => join(handoffDir(home), `${sid}.json`)
+export const continuePath = (home: string, sid: string) => join(handoffDir(home), `${sid}-continue.md`)
 
 export function loadRecord(home: string, sid: string): HandoffRecord | undefined {
   return readJson<HandoffRecord>(recordPath(home, sid))
@@ -114,10 +82,7 @@ export function wantsHandoff(e: Eligibility, config: Config): boolean {
   )
 }
 
-/**
- * The brief's section that carries the session's task list. The new session
- * rebuilds its own list from it, so the plan continues instead of restarting.
- */
+/** The brief's section the new session rebuilds its task list from, so the plan continues instead of restarting. */
 export const TASK_LIST_HEADING = '## Task list'
 
 export function handoffMessage(marker: string, path: string): string {
@@ -136,32 +101,25 @@ export function handoffMessage(marker: string, path: string): string {
   )
 }
 
-/** The task-list heading at any level and in any case, maybe annotated ("## Task List (open steps)"). */
 const TASK_LIST_LINE = /^(#{1,6})\s+task list\b/i
-/** A heading; one of the task list's level or higher ends the section, deeper ones group its steps. */
 const HEADING_LINE = /^(#{1,6})\s/
-/** A code fence: what is between two of them is quoted, not structure. */
 const FENCE_LINE = /^(?:```|~~~)/
-/**
- * An open step as a model plausibly writes it: a -, *, + or numbered item whose status, maybe bold or in a
- * code span, is pending or in progress in any spelling. Completed steps and bare checkboxes do not count.
- */
 const OPEN_STEP_LINE = /^\s*(?:[-*+]|\d+[.)])\s+(?:\*\*|`)?\[(?:pending|in[ _-]?progress)\]/i
 
 /** Open steps (pending, in_progress) listed under the brief's task-list heading, trimmed. */
 export function openTaskSteps(brief: string): string[] {
   const steps: string[] = []
   let fenced = false
-  let level = 0 // heading level of the task list once found; 0 = not in the section yet
+  let taskListLevel = 0
   for (const line of brief.split('\n').map((l) => l.trim())) {
     if (FENCE_LINE.test(line)) { fenced = !fenced; continue }
     if (fenced) continue
-    if (!level) {
-      level = TASK_LIST_LINE.exec(line)?.[1].length ?? 0
+    if (!taskListLevel) {
+      taskListLevel = TASK_LIST_LINE.exec(line)?.[1].length ?? 0
       continue
     }
     const heading = HEADING_LINE.exec(line)
-    if (heading && heading[1].length <= level) break
+    if (heading && heading[1].length <= taskListLevel) break
     if (OPEN_STEP_LINE.test(line)) steps.push(line)
   }
   return steps
@@ -185,7 +143,7 @@ export function requestHandoff(home: string, state: SessionState, now: number, a
   return path
 }
 
-/** The Stop closing the handoff wake: is there a brief to offer later? */
+/** Run by the Stop that closes the handoff wake: the brief is `ready`, or `failed` with a one-shot notice. */
 export function settleHandoff(home: string, sid: string, now: number): void {
   const rec = loadRecord(home, sid)
   if (!rec || rec.status !== 'requested') return
@@ -204,16 +162,14 @@ export function settleHandoff(home: string, sid: string, now: number): void {
   appendLedger(home, { t, sessionId: sid, event: 'handoff-ready', ctxTokens: rec.preCtx })
 }
 
-// --- the menu -----------------------------------------------------------------------
-
 export interface SpawnResult {
   ok: boolean
   output: string
 }
 
-/** The process side, injected so touch stays testable (see handoff-run.ts). */
+/** The process side, injected so tests spawn nothing. */
 export interface HandoffIO {
-  /** Run the spawn command with the given extra env; ok = exit 0. */
+  /** ok = exit 0. */
   spawn: (command: string, env: Record<string, string>) => SpawnResult
   /** Close this session shortly after the hook has returned. */
   closeLater: (sessionId: string) => void
@@ -227,13 +183,11 @@ export type Interception =
 
 const CONTINUE_HERE = new Set(['1', 'force'])
 
-/**
- * A message another session or a finished task sent, not something a person typed: Claude Code
- * hands it over as a `<cross-session-message …>` or a `<task-notification>` block, maybe after its
- * one-line "Another Claude session sent a message:" preamble.
- */
+// WARNING: matches Claude Code's own wrapping of a peer message or task notification (`<cross-session-message …>`,
+// `<task-notification>`, maybe after a one-line preamble); if that format changes, they read as typed prompts.
 const MACHINE_MESSAGE = /^\s*(?:Another Claude session sent a message:\s*)?<(?:cross-session-message|task-notification)[\s>]/
 
+/** A message another session or a finished task sent, not something a person typed. */
 export function isMachineMessage(prompt: string): boolean {
   return MACHINE_MESSAGE.test(prompt)
 }
@@ -247,7 +201,7 @@ export function coldRewriteUsd(ctxTokens: number, model: string | undefined, con
   return (ctxTokens * rateFor(model, config.prices, ctxTokens).cacheWrite) / 1e6
 }
 
-function menu(rec: HandoffRecord, state: SessionState, config: Config, now: number, gate: boolean): string {
+function menuText(rec: HandoffRecord, state: SessionState, config: Config, now: number, gate: boolean): string {
   const ctx = state.ctxTokens || rec.preCtx
   const idle = state.lastTurnEndAt !== undefined ? ` (idle ${idleText(now - state.lastTurnEndAt)})` : ''
   const usd = coldRewriteUsd(ctx, state.model ?? rec.model, config).toFixed(2)
@@ -286,7 +240,6 @@ function writeContinue(home: string, rec: HandoffRecord): string {
   const brief = readFileSync(rec.briefPath, 'utf8').trim()
   const held = rec.heldPrompt?.trim()
   const tail = held ? `\n\n## The user's message on return\n\n${held}\n` : '\n'
-  // The steps themselves, not a pointer to the section: it may list finished ones too.
   const steps = openTaskSteps(brief)
   const restore = steps.length
     ? `\n\nBefore anything else, restore the task list: create these open steps with TaskCreate (or TodoWrite, ` +
@@ -304,7 +257,6 @@ function startNew(rec: HandoffRecord, config: Config, io: HandoffIO | undefined,
   const home = config.home
   const path = writeContinue(home, rec)
   const { spawnCommand, closeAfterSpawn } = config.handoff
-  // A failed start drops `auto`: the next prompt gets the menu and its way out (`1`), not this again.
   if (!spawnCommand || !io) {
     saveRecord(home, { ...rec, auto: undefined, continuePath: path })
     return { kind: 'block', reason: `cache-keeper: start a new session from ${path} — this one stays as it is.` }
@@ -316,7 +268,7 @@ function startNew(rec: HandoffRecord, config: Config, io: HandoffIO | undefined,
     CACHE_KEEPER_TRANSCRIPT_PATH: rec.transcriptPath,
     ...(cwd ? { CACHE_KEEPER_CWD: cwd } : {}),
   })
-  const out = r.output.trim().slice(-OUTPUT_CHARS)
+  const out = r.output.trim().slice(-SPAWN_OUTPUT_CHARS)
   const t = new Date(now).toISOString()
   if (!r.ok) {
     saveRecord(home, { ...rec, auto: undefined, continuePath: path })
@@ -335,11 +287,6 @@ function startNew(rec: HandoffRecord, config: Config, io: HandoffIO | undefined,
   }
 }
 
-/**
- * Continue a background session here on a peer message or task notification. A message the menu
- * held before goes to the model with it, so passing this one does not drop that one: as context on
- * a prompt, as a notice for the next prompt on a gate turn (a gate cannot add context).
- */
 function continueUnattended(
   rec: HandoffRecord,
   state: SessionState,
@@ -367,10 +314,7 @@ function continueUnattended(
   return { kind: 'pass', context: text }
 }
 
-/**
- * A real prompt arrives: undefined = nothing to do with handoff. Called by
- * touch before it records the prompt; a block means the prompt never ran.
- */
+/** Called by touch before it records a prompt: undefined = nothing to do; a block means the prompt never ran. */
 export function interceptPrompt(
   prompt: string,
   state: SessionState,
@@ -388,18 +332,14 @@ export function interceptPrompt(
   const cold = state.lastTurnEndAt !== undefined && now - state.lastTurnEndAt >= config.cacheTtlSec * 1000
 
   if (!cold) {
-    // Back before the cache died: the conversation goes on and the brief goes stale.
     saveRecord(home, { ...rec, status: 'used', choice: 'warm', usedAt: now })
     return { kind: 'pass' }
   }
 
-  // A background session has nobody at the input box to answer the menu: a held peer message or task
-  // notification would freeze it, the sender told "delivered". The work it carries was asked for, so
-  // it pays the cold turn here; handing off instead would leave the sender writing to a closed session.
+  // INVARIANT: a background session has nobody to answer the menu: a held peer message or task notification would
+  // freeze it while its sender reads "delivered". It pays the cold turn here; a handoff would leave the sender writing to a closed session.
   if (background && isMachineMessage(prompt)) return continueUnattended(rec, state, config, now, gate, prompt)
 
-  // Asked again now, not trusted from the wake: the holder may have left or ended since. A gate turn
-  // may be a task notification of a session mid-work, never a reason to close it: the menu then.
   if (rec.auto && !gate && stillHeld?.()) return startNew({ ...rec, heldPrompt: prompt }, config, io, now)
 
   const text = prompt.trim()
@@ -413,8 +353,8 @@ export function interceptPrompt(
         : { kind: 'pass', context: `The user's message, held while cache-keeper asked where to continue:\n\n${rec.heldPrompt}` }
     }
   }
-  // Once the menu is shown, its answer decides: `auto` would take the reply (`1`, `2`) as the message.
+  // INVARIANT: once the menu is shown its answer decides: `auto` would take the reply (`1`, `2`) as the message.
   const held = { ...rec, auto: undefined, heldPrompt: prompt, menuShownAt: now }
   saveRecord(home, held)
-  return { kind: 'block', reason: menu(held, state, config, now, gate) }
+  return { kind: 'block', reason: menuText(held, state, config, now, gate) }
 }

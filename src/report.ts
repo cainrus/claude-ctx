@@ -1,16 +1,9 @@
 /**
- * `cache-keeper report`: what the ledger says the keeper did and whether it paid.
- *
- * The money is at API list prices (per-model rows in prices.ts, overridable in
- * config.json). On a subscription nothing is billed per token,
- * but the same tokens count against usage limits, so the ratio is still the
- * meaningful part.
- *
- * A resumed stretch is valued by what its first request really paid
- * (`resume-paid`): a full rewrite of the context, minus that payment. A resume
- * into a cache that had gone after all subtracts to about zero on its own. Only
- * a resume with no `resume-paid` (older ledgers, a transcript that never caught
- * up) falls back to the estimate from the context size.
+ * `cache-keeper report` (or `--json`) sums up the ledger: pings sent, cache hits and misses, idle stretches resumed
+ * warm or abandoned, refusals by reason, hook errors, and the money: rewrites avoided minus ping cost.
+ * A resumed stretch is worth a full rewrite of its context minus what its first request really paid; without that
+ * measurement it is estimated from the context size. Money is at API list prices, set per model with `prices` in
+ * config.json; on a subscription the same tokens count against usage limits, so the balance still matters.
  */
 
 import type { Config } from './config.ts'
@@ -51,7 +44,7 @@ export interface Summary {
 
 const tok = (v: number | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
-/** Cost of one wake turn (or fork, or manual ping), USD. */
+/** Also for a fork or a manual ping. */
 export function wakeCostUsd(e: LedgerEntry, prices: PriceTable): number {
   return requestUsd(e, rateFor(e.model, prices, promptOf(e)))
 }
@@ -99,21 +92,18 @@ export function summarize(entries: LedgerEntry[], config: Pick<Config, 'prices' 
     unpriced: unpricedModels(entries, config.prices),
     errors: {},
   }
-  /** Pings in the currently open idle stretch, per session. */
-  const open = new Map<string, number>()
-  /** A pinged resume waiting for its `resume-paid`: the context it held and the estimate already counted. */
+  const openStretchPings = new Map<string, number>()
   const awaitingPaid = new Map<string, { ctxTokens: number; estimateUsd: number }>()
 
   for (const e of entries) {
     switch (e.event) {
       case 'ping':
         s.pings++
-        open.set(e.sessionId, (open.get(e.sessionId) ?? 0) + 1)
+        openStretchPings.set(e.sessionId, (openStretchPings.get(e.sessionId) ?? 0) + 1)
         break
       case 'wake-hit':
       case 'wake-miss':
         s.pingCostUsd += wakeCostUsd(e, config.prices)
-        // A handoff turn (detail 'handoff') writes a brief: it costs, but was no ping.
         if (e.detail === 'handoff') break
         if (e.event === 'wake-hit') s.hits++
         else s.misses++
@@ -123,7 +113,7 @@ export function summarize(entries: LedgerEntry[], config: Pick<Config, 'prices' 
         s.pingCostUsd += wakeCostUsd(e, config.prices)
         break
       case 'resume':
-        open.delete(e.sessionId)
+        openStretchPings.delete(e.sessionId)
         awaitingPaid.delete(e.sessionId)
         if (tok(e.pings) > 0) {
           s.resumedAfterPing++
@@ -160,7 +150,7 @@ export function summarize(entries: LedgerEntry[], config: Pick<Config, 'prices' 
         break
     }
   }
-  for (const n of open.values()) if (n > 0) s.abandoned++
+  for (const n of openStretchPings.values()) if (n > 0) s.abandoned++
   s.unscored = Math.max(0, s.pings - s.hits - s.misses)
   s.balanceUsd = s.savedUsd - s.pingCostUsd
   return s
@@ -169,7 +159,7 @@ export function summarize(entries: LedgerEntry[], config: Pick<Config, 'prices' 
 const usd = (v: number) => `${v < 0 ? '-' : ''}$${Math.abs(v).toFixed(2)}`
 const row = (label: string, value: string | number) => `  ${label.padEnd(22)}${String(value).padStart(10)}`
 
-/** What the report says about the per-stretch cap: fixed by the config, or where the tuner left it. */
+/** The per-stretch cap: fixed by the config, or where the tuner left it. */
 export interface CapLine {
   maxPings: number
   auto: boolean

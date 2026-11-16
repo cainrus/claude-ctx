@@ -1,16 +1,16 @@
 /**
- * Is a human at this machine? macOS `HIDIdleTime` from IOHIDSystem: nanoseconds
- * since the last keyboard/mouse event. It keeps counting while the lid is shut
- * or the screen is locked, which is exactly the "gone" we want to detect.
- *
- * Every failure is `null` (unknown), never a number: the policy treats unknown
- * differently from both "here" and "gone".
+ * Reads how long the keyboard and mouse have been idle, before each ping. macOS: `HIDIdleTime`, which keeps
+ * counting through a closed lid or a locked screen. Linux: the first that answers of GNOME's Mutter idle monitor,
+ * the freedesktop ScreenSaver interface (KDE), `xprintidle` (X11), then logind's idle hint (only with a graphical
+ * session). Elsewhere, or when no probe answers, presence is unknown: the `away` row lets the ping through, but the
+ * away budget counts it as not at the keyboard. `CACHE_KEEPER_IDLE_SEC` overrides the probe (seconds or `unknown`);
+ * `CACHE_KEEPER_BACKGROUND=0|1` forces a session to count as interactive or background.
  */
 
 import { execFileSync } from 'node:child_process'
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs'
 
-/** `"HIDIdleTime" = 123456789000` -> whole seconds; null if absent or unparseable. */
+/** `"HIDIdleTime" = 123456789000` (ns) -> whole seconds. */
 export function parseIdleSeconds(ioregOutput: string): number | null {
   const m = ioregOutput.match(/"HIDIdleTime"\s*=\s*(\d+)/)
   if (!m) return null
@@ -19,11 +19,7 @@ export function parseIdleSeconds(ioregOutput: string): number | null {
   return Math.floor(ns / 1_000_000_000)
 }
 
-/**
- * `CACHE_KEEPER_IDLE_SEC` overrides the probe (tests, non-macOS setups with
- * their own idle source). A number is the idle time; `unknown` or any
- * non-numeric value means null.
- */
+/** `CACHE_KEEPER_IDLE_SEC`: a number is the idle time; `unknown` or anything non-numeric is null. */
 export function parseIdleOverride(raw: string): number | null {
   const n = Number(raw)
   return raw.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
@@ -31,7 +27,6 @@ export function parseIdleOverride(raw: string): number | null {
 
 export type Exec = (cmd: string, args: string[]) => string
 
-/** One probe never holds the wake for long: Linux tries up to four in a row. */
 const PROBE_TIMEOUT_MS = 2000
 
 const defaultExec: Exec = (cmd, args) =>
@@ -41,7 +36,7 @@ export interface ProbeOptions {
   env?: NodeJS.ProcessEnv
   platform?: NodeJS.Platform
   exec?: Exec
-  /** Epoch ms; logind reports idle as a point in time. */
+  /** Epoch ms. */
   now?: number
   uid?: number
 }
@@ -61,40 +56,26 @@ export function readIdleSeconds(opts: ProbeOptions = {}): number | null {
   }
 }
 
-// --- Linux -----------------------------------------------------------------
-//
-// No single source covers every desktop, so the probes are tried in order and
-// the first answer wins. The precise ones need the desktop's session bus or X
-// display, which a hook inherits from an interactive session but usually not
-// from a daemon-spawned one; logind needs neither, which is why it is last but
-// still there. Every probe that is missing, fails or prints something else
-// falls through, and nothing answering is null, as on any other platform.
-
-/** `gdbus call` prints a tuple such as `(uint64 12345,)`; the number, or null. */
+/** `(uint64 12345,)` from `gdbus call` -> the number. */
 export function parseGdbusUint(out: string): number | null {
   const m = out.match(/^\(\s*(?:uint32|uint64)\s+(\d+)\s*,?\s*\)\s*$/m)
   return m ? Number(m[1]) : null
 }
 
-/** A bare integer on its own (xprintidle prints idle milliseconds). */
 export function parseBareInt(out: string): number | null {
   const s = out.trim()
   return /^\d+$/.test(s) ? Number(s) : null
 }
 
-/**
- * `loginctl show-user` lines -> idle seconds. Trusted only while the user has
- * a graphical session (`Display=`): without a desktop to set it, IdleHint can
- * stay "no" forever, which would read as "at the keyboard" and lift the away
- * budget. `IdleHint=no` is 0: the desktop's own idle delay (5 min on GNOME by
- * default) has not passed, so the human counts as present.
- */
+/** `loginctl show-user` lines -> idle seconds. */
 export function parseLoginctlUser(out: string, now: number): number | null {
   const props = new Map<string, string>()
   for (const line of out.split('\n')) {
     const i = line.indexOf('=')
     if (i > 0) props.set(line.slice(0, i).trim(), line.slice(i + 1).trim())
   }
+  // INVARIANT: trusted only with a graphical session: without a desktop to set it, IdleHint can stay "no"
+  // forever, read as "at the keyboard", and lift the away budget.
   if (!props.get('Display')) return null
   const hint = props.get('IdleHint')
   if (hint === 'no') return 0
@@ -112,12 +93,14 @@ interface LinuxProbe {
   name: string
   cmd: string
   args: (uid: number) => string[]
-  /** Command output -> idle seconds, or null to try the next probe. */
+  /** null tries the next probe. */
   parse: (out: string, now: number) => number | null
 }
 
 const msToSec = (ms: number | null) => (ms === null ? null : Math.floor(ms / 1000))
 
+// WARNING: order matters. The precise probes need the desktop's session bus or X display, which a hook inherits
+// from an interactive session but not from a daemon-spawned one; logind needs neither, so it is the last resort.
 export const LINUX_PROBES: readonly LinuxProbe[] = [
   {
     name: 'mutter', // GNOME, X11 and Wayland: milliseconds
@@ -150,24 +133,19 @@ export function linuxIdleSeconds(exec: Exec, now: number, uid: number): number |
     try {
       const v = p.parse(exec(p.cmd, p.args(uid)), now)
       if (v !== null && Number.isFinite(v) && v >= 0) return v
-    } catch {
-      // missing, failing or timed out: the next one
-    }
+    } catch {}
   }
   return null
 }
 
-/** The tail of a transcript is enough: every line Claude Code writes carries the session kind. */
 const KIND_TAIL_BYTES = 16_384
 
-/**
- * Is this a background session, one that nobody watches at an input box? Claude Code starts
- * background sessions with `CLAUDE_JOB_DIR` and stamps their transcript lines `"sessionKind":"bg"`;
- * hooks inherit the first, the second is the fallback. `CACHE_KEEPER_BACKGROUND=0|1` overrides both.
- */
+/** A session nobody watches at an input box. */
 export function isBackgroundSession(env: NodeJS.ProcessEnv = process.env, transcriptPath?: string): boolean {
   const forced = env.CACHE_KEEPER_BACKGROUND
   if (forced === '0' || forced === '1') return forced === '1'
+  // WARNING: Claude Code starts background sessions with CLAUDE_JOB_DIR and stamps their transcript lines
+  // "sessionKind":"bg"; hooks inherit the env var, the transcript is the fallback.
   if (env.CLAUDE_JOB_DIR) return true
   if (!transcriptPath) return false
   try {

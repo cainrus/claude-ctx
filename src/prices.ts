@@ -1,14 +1,8 @@
 /**
- * API list prices, USD per million tokens, per model.
- *
- * No Anthropic endpoint returns prices (the Models API gives ids, limits and
- * capabilities only), and keeper makes no network calls, so the table is kept
- * here by hand, dated, and `prices` in config.json overrides any row. A model
- * the table does not know is counted at `default` and named in the report.
- *
- * The cache-read ratio differs by model since the 5.x line: 0.1x of input on
- * most, 0.05x on Opus 5.5 and Sonnet 5.5, 0.025x on Fable / Mythos 5.1 and 5.2.
- * A 1-hour cache write is 2x input everywhere, output 5x.
+ * API list prices in USD per million tokens, per model, used by `report` and the handoff menu. `prices` in
+ * config.json overrides any row: an object with any of `input`, `cacheRead`, `cacheWrite`, `output`, or a number
+ * (the input price, standard multiples) for a model id prefix or a family such as `"opus"`. A model the table
+ * does not know is counted at `default` and named in the report.
  */
 
 export interface Rate {
@@ -23,10 +17,9 @@ export interface Rate {
 
 export type PriceTable = Record<string, Rate>
 
-/** When the rows below were checked. */
 export const PRICES_AS_OF = '2026-11-03'
 
-/** A row from the input price and the cache-read price, with the standard write and output multiples. */
+/** Standard multiples: 1h cache write 2× input, output 5×; cache read 0.1× unless given. */
 export function rate(input: number, cacheRead = input * 0.1, extra: Partial<Rate> = {}): Rate {
   return { input, cacheRead, cacheWrite: input * 2, output: input * 5, ...extra }
 }
@@ -56,18 +49,13 @@ export const DEFAULT_PRICES: PriceTable = {
   default: rate(5),
 }
 
-/** Bedrock and Vertex spell ids with a provider prefix (`us.anthropic.claude-…`, `anthropic.claude-…`). */
 function bareId(model: string): string {
   const m = model.toLowerCase()
   const at = m.indexOf('claude-')
   return at > 0 ? m.slice(at) : m
 }
 
-/**
- * Prices in force: config.json's `prices` over the table. A row there is either
- * a number (the input price, standard multiples; the pre-0.6.6 form, keyed by
- * any part of the model id such as "opus") or an object with any of the fields.
- */
+/** config.json's `prices` over the table. */
 export function mergePrices(overrides: unknown): PriceTable {
   const out: PriceTable = { ...DEFAULT_PRICES }
   if (!overrides || typeof overrides !== 'object') return out
@@ -86,10 +74,10 @@ export function mergePrices(overrides: unknown): PriceTable {
       cacheRead: pos(o.cacheRead) ?? keep?.cacheRead ?? input * 0.1,
       cacheWrite: pos(o.cacheWrite) ?? keep?.cacheWrite ?? input * 2,
       output: pos(o.output) ?? keep?.output ?? input * 5,
-      // An overridden row is the person's price at every prompt size: the table's long-prompt tier goes.
     }
   }
-  // A family key ("opus", the pre-0.6.6 form) rewrites every table row it names; model prefixes after it.
+  // WARNING: family keys ("opus", the pre-0.6.6 form) apply first and rewrite every row they name,
+  // so a model-prefix override still wins over its family.
   const entries = Object.entries(overrides as Record<string, unknown>)
   const isFamily = (k: string) => k !== 'default' && !k.startsWith('claude-')
   for (const [key, v] of [...entries.filter(([k]) => isFamily(k)), ...entries.filter(([k]) => !isFamily(k))]) {
@@ -117,13 +105,11 @@ export function rowFor(model: string | undefined, prices: PriceTable): { key: st
   return best === undefined ? { key: 'default', rate: prices.default ?? rate(5) } : { key: best, rate: prices[best] }
 }
 
-/** The rate a request with `promptTokens` of prompt pays. */
 export function rateFor(model: string | undefined, prices: PriceTable, promptTokens = 0): Rate {
   const r = rowFor(model, prices).rate
   return promptTokens > 100_000 && r.over100k ? r.over100k : r
 }
 
-/** Token counts as the ledger keeps them. */
 export interface Usage {
   inputTokens?: number
   cacheRead?: number
@@ -133,7 +119,6 @@ export interface Usage {
 
 const tok = (v: number | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
-/** What one request cost, USD. */
 export function requestUsd(u: Usage, r: Rate): number {
   return (tok(u.inputTokens) * r.input + tok(u.cacheRead) * r.cacheRead + tok(u.cacheWrite) * r.cacheWrite + tok(u.outputTokens) * r.output) / 1e6
 }

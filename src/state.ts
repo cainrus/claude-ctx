@@ -1,15 +1,4 @@
-/**
- * On-disk state under `$CACHE_KEEPER_HOME`:
- *
- *   sessions/<session_id>.json   per-session state
- *   forks/<session_id>.json      when the mod last took the session's pings
- *   away-budget.json             the machine-wide away bucket
- *   ledger.jsonl                 one line per decision (see ledger.ts)
- *
- * Every write is `write tmp + rename`, so a reader never sees half a file. Two
- * hooks racing on the same file can lose an update; for the away budget that
- * costs one extra ping, never an unbounded number.
- */
+/** On-disk state under `$CACHE_KEEPER_HOME`: `sessions/`, `forks/`, `away-budget.json`. */
 
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -19,11 +8,10 @@ import type { Config } from './config.ts'
 export interface SessionState {
   sessionId: string
   transcriptPath?: string
-  /** Epoch ms when the cache was last touched by a finished turn (real or wake). */
+  /** Epoch ms the cache was last touched by a finished turn (real or wake). */
   lastTurnEndAt?: number
   /** Epoch ms of the last real (non-wake) prompt. */
   lastHumanAt?: number
-  /** Epoch ms of the last ping this session was sent. */
   lastPingAt?: number
   ctxTokens: number
   model?: string
@@ -31,49 +19,34 @@ export interface SessionState {
   /** A wake was sent and its closing Stop has not been recorded yet. */
   pendingPing: boolean
   lastPingHit: boolean | null
-  /** A handoff was asked for in this idle stretch (reset by a real prompt). */
+  /** Reset by a real prompt. */
   handoffRequested?: boolean
   /** The open wake is a handoff: its closing Stop checks the brief. */
   handoffPending?: boolean
-  /**
-   * Epoch ms when the gate answered a turn itself instead of the model. That
-   * turn still ends with a Stop, which must not read as a touched cache.
-   */
+  /** Epoch ms the gate answered a turn itself instead of the model. */
   gateTurnAt?: number
-  /**
-   * Epoch ms of the real prompt that ended a pinged stretch. The next Stop logs
-   * what that turn's first request paid (`resume-paid`) and clears it.
-   */
+  /** Epoch ms of the real prompt that ended a pinged stretch; the next Stop logs `resume-paid` and clears it. */
   resumeAt?: number
-  /** Epoch ms of `/cache-keeper:done`: no pings until the next real prompt. */
+  /** Epoch ms of `/cache-keeper:done`. */
   doneAt?: number
-  /** How the open ping went out: a fork (scored by `forked`) or a turn (scored by `record`). */
+  /** A fork is scored by `forked`, a turn by `record`. */
   pingTransport?: 'fork' | 'turn'
-  /** Forks re-sent for the open ping after one came back with no reply (`forked`). */
+  /** Forks re-sent for the open ping after one came back with no reply. */
   forkRetries?: number
   /** The open ping is `/cache-keeper:ping`'s: logged as `manual-ping`, never scored. */
   pingManual?: boolean
   /** A failed fork waits on the mod's retry timer (not in flight). */
   forkRetryParked?: boolean
-  /** The last hook of this session that threw (errors.ts); cleared by the next turn `record` closes. */
+  /** Cleared by the next turn `record` closes. */
   lastError?: { at: number; cmd: string; message: string }
-  /** When this session was last told of an error (a notice on its next prompt), epoch ms. */
   errorNoticeAt?: number
-  /** Epoch ms since the main thread waits at AskUserQuestion (the mod's `wait-start`); the turn is open. */
+  /** Epoch ms since the main thread waits at AskUserQuestion; the turn is open. */
   waitingSince?: number
-  /**
-   * Epoch ms of the last main-thread request Claude Code itself saw (a real
-   * turn or a wake turn). A fork renews the server's cache but not Claude
-   * Code's own clock, which its compaction reads (anthropics/claude-code#105017).
-   */
+  /** Epoch ms of the last main-thread request Claude Code itself saw (a real turn or a wake turn). */
   lastRequestAt?: number
   /** Fork pings sent since `lastRequestAt`. */
   forkPingsHeld?: number
-  /**
-   * Epoch ms of the last compaction (the mod reports it). Until the next turn
-   * the compacted prefix was never sent as a request: a fork would replay it
-   * uncached and write none of it, so the next ping goes as a wake turn.
-   */
+  /** Epoch ms of the last compaction, reported by the mod. */
   compactedAt?: number
 }
 
@@ -97,8 +70,8 @@ export function writeJsonAtomic(path: string, value: unknown): void {
   renameSync(tmp, path)
 }
 
-/** Session ids are UUIDs; anything else is flattened so it cannot escape the directory. */
 export function safeId(sessionId: string): string {
+  // INVARIANT: an id that is not a plain UUID is flattened so it cannot escape the sessions directory.
   const cleaned = sessionId.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_')
   return cleaned === '' ? '_' : cleaned
 }
@@ -125,13 +98,9 @@ export function deleteSession(home: string, sessionId: string): void {
   rmSync(forkClaimPath(home, sessionId), { force: true })
 }
 
-/**
- * `forks/<session_id>.json`: when the plugin's mod (hooks/keepalive.ts) last
- * took this session's pings. While it is not older than the last turn, the
- * mod's timer sends them as forks and the Stop sleeper stands down. A file of
- * its own: the mod claims at turn end, just when `record` rewrites the session
- * file, and one write would drop the other's.
- */
+/** When the plugin's mod last took this session's pings. */
+// WARNING: a file apart from the session's: the mod claims at turn end, just when `record` rewrites the
+// session file, and one write would drop the other's.
 export function forkClaimPath(home: string, sessionId: string): string {
   return join(home, 'forks', `${safeId(sessionId)}.json`)
 }
@@ -159,45 +128,30 @@ export function saveAwayBudget(home: string, budget: AwayBudget): void {
   writeJsonAtomic(awayBudgetPath(home), budget)
 }
 
-// --- what the session record says, read by the CLI and the status report ----
-
-/** How long before the last turn the mod may have armed and still own its stretch (hook order varies). */
 export const ARM_SLACK_MS = 60_000
 
-/**
- * Does the plugin's mod send this session's pings (fork.ts)? Then the Stop
- * sleeper stands down; otherwise the mod does. One owner per stretch, so a
- * stretch never gets both a fork and a wake turn.
- */
+/** Does the plugin's mod send this session's pings as forks? Then the Stop sleeper stands down. */
 export function forkOwns(state: SessionState, config: Config): boolean {
   if (!config.forkPings) return false
   const armedAt = loadForkClaim(config.home, state.sessionId)
   return armedAt !== undefined && armedAt >= (state.lastTurnEndAt ?? 0) - ARM_SLACK_MS
 }
 
-/**
- * A compaction since the last request Claude Code sent (the mod reports it):
- * the new prefix is in no cache yet, so there is nothing to hold. Measured: a
- * fork after /compact sent the compacted 42k uncached and wrote none of it; a
- * wake turn would write it all, which the person's own next turn pays anyway.
- */
+/** A compaction since the last request: the new prefix is in no cache yet, so there is nothing to hold. */
 export function compactedSinceRequest(state: SessionState): boolean {
+  // WORKAROUND: measured, a fork after /compact sent the compacted 42k uncached and wrote none of it; a wake
+  // turn would write it all, which the person's own next turn pays anyway.
   return state.compactedAt !== undefined && state.compactedAt >= (state.lastRequestAt ?? 0)
 }
 
-/**
- * When the cache goes cold if nothing else is sent: the last confirmed
- * renewal (a turn, or a fork ping that came back; both move `lastTurnEndAt`)
- * plus the TTL. A ping granted but never back renews nothing. Undefined while
- * nothing was sent. hooks/status.ts keeps its own copy (the mod does not
- * import src/), which also counts the running turn.
- */
+/** When the cache goes cold if nothing else is sent; undefined while nothing was sent. */
+// WARNING: hooks/status.ts keeps its own copy (the mod does not import src/); change both together.
 export function warmUntilOf(state: SessionState | undefined, cacheTtlSec: number): number | undefined {
   const last = state?.lastTurnEndAt
   return last === undefined || last === 0 ? undefined : last + cacheTtlSec * 1000
 }
 
-/** The open ping is over (scored, failed for good, or overtaken by a real prompt). */
+/** Scored, failed for good, or overtaken by a real prompt. */
 export function closePing(state: SessionState): void {
   state.pendingPing = false
   delete state.pingManual

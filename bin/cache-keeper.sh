@@ -1,19 +1,12 @@
 #!/bin/sh
-# Every hook command enters here. With a node on PATH that runs .ts natively it
-# hands over to cache-keeper.ts (stdin and exit code pass through: `exec`);
-# without one it does nothing and exits 0, so a session never shows a hook
-# error and is never held up by keeper.
-#
-# Claude Code brings no Node of its own (the native install is one binary) and
-# `/plugin install` checks none, so `check`, the SessionStart hook, is where a
-# missing or old one gets said: a line for the person in every session, and,
-# once per machine for each kind of problem (none, too old, no version), a
-# note for the model to offer to set Node up (AskUserQuestion). Only on a fresh
-# start, and never in an SDK or `claude -p` run: nobody there to ask.
-#
-# The threshold is hooks/status.ts's nodeOk (22.18+ on 22, 23.6+ on 23, any
-# 24+); test/launcher.test.ts holds the two to the same answers.
+# The Node check: every hook command enters here and runs cache-keeper.ts only
+# under a `node` on PATH that runs .ts (22.18 or later); without one the hooks
+# do nothing and exit 0. At session start it then says so in every session, and
+# once per machine asks the model to offer setting Node up. Keeper turned off
+# (`"enabled": false` or CACHE_KEEPER_DISABLED=1) stays silent.
 
+# WORKAROUND: Claude Code brings no Node of its own (the native install is one binary)
+# and `/plugin install` checks none, so a missing or old one would fail without a word.
 v=$(node --version 2>/dev/null </dev/null) || v=
 major= minor= patch=
 case $v in
@@ -39,8 +32,6 @@ fi
 
 if [ -n "$ok" ]; then
   if [ "$1" = check ]; then
-    # Node fits. Only a SessionStart after a compaction has work for node:
-    # the compacted prefix is in no cache yet, so pings wait for the next turn.
     input=$(cat)
     printf '%s' "$input" | tr -d '\n\r' | grep -Eq '"source"[[:space:]]*:[[:space:]]*"compact"' || exit 0
     printf '%s' "$input" | node --disable-warning=ExperimentalWarning "$(dirname "$0")/cache-keeper.ts" compacted-start
@@ -51,10 +42,8 @@ fi
 
 [ "$1" = check ] || exit 0
 
-# Keeper turned off says nothing, as src/config.ts reads it: the env first
-# (trimmed, any case; it also turns keeper back on over the file), else a
-# top-level "enabled" of false, "false", "no", "off" or "0" in config.json.
-# Arrays and nested objects (handoff's own "enabled") are cut out first.
+# INVARIANT: reads "off" as src/config.ts does (env first, trimmed, any case, and it turns keeper back on over the file;
+# else a top-level "enabled" of false/"false"/"no"/"off"/"0"); nested objects are cut out first (handoff's own "enabled").
 lower() { printf '%s' "$1" | tr -d ' \t' | tr '[:upper:]' '[:lower:]'; }
 home=$(lower "${CACHE_KEEPER_HOME:-}")
 home=${home:+$CACHE_KEEPER_HOME}
@@ -79,7 +68,6 @@ fi
 problem="cache-keeper is off: it needs Node.js 22.18 or later on PATH, $found"
 human="$problem. To fix it, ask Claude: set up Node 22.18 for cache-keeper."
 
-# SessionStart input names its source: startup, resume, clear or compact.
 fresh=
 cat | tr -d '\n\r' | grep -Eq '"source"[[:space:]]*:[[:space:]]*"startup"' && fresh=1
 case ${CLAUDE_CODE_ENTRYPOINT:-} in sdk-*) fresh= ;; esac

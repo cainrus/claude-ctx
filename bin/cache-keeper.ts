@@ -1,8 +1,5 @@
 #!/usr/bin/env -S node --disable-warning=ExperimentalWarning
-/**
- * cache-keeper — keep an idle Claude Code session's prompt cache warm.
- * Entry point for every hook and for the human-facing subcommands.
- */
+/** The keeper CLI: every hook command and the subcommands a person runs. */
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -98,7 +95,7 @@ function main(argv: string[]): number {
 
   const hook = HOOKS[cmd]
   if (hook) {
-    // A hook must never break the session it runs in: any failure is exit 0, and leaves a trace (errors.ts).
+    // INVARIANT: a hook must never break the session it runs in: any failure is exit 0 and leaves a trace (errors.ts).
     let input: HookInput = {}
     let home: string | undefined
     try {
@@ -121,14 +118,11 @@ function main(argv: string[]): number {
       process.stderr.write(`cache-keeper ${cmd}: ${(err as Error)?.message ?? err}\n`)
       try {
         recordError(home ?? resolveHome(), cmd, input.session_id, err, Date.now())
-      } catch {
-        // never
-      }
+      } catch {}
       return 0
     }
   }
 
-  // Hooks enter through the launcher beside this file, which checks Node first.
   const script = shellQuote(fileURLToPath(new URL('./cache-keeper.sh', import.meta.url)))
   switch (cmd) {
     case 'report': {

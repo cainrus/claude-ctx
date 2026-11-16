@@ -1,8 +1,6 @@
 /**
- * Effective configuration: defaults <- `$CACHE_KEEPER_HOME/config.json` <- env.
- *
- * Invalid values are ignored rather than fatal: a hook must never break the
- * session it runs in because of a typo in a settings file.
+ * Settings come from the defaults, then `$CACHE_KEEPER_HOME/config.json`, then env, the later winning.
+ * An invalid value (a typo, a negative number) is ignored and the earlier source stays in force.
  */
 
 import { readFileSync } from 'node:fs'
@@ -17,45 +15,74 @@ export interface Config {
   home: string
   enabled: boolean
   thresholds: Thresholds
-  /** `maxPings` follows the ledger (tune.ts) unless env or config.json set it. */
+  /** `maxPings` follows the ledger unless env or config.json set it. */
   maxPingsAuto: boolean
   /** A wake turn is a cache hit when read / (read + write) >= this. */
   hitRatio: number
   /** Cache TTL the savings estimate assumes (1h on a subscription). */
   cacheTtlSec: number
-  /** Delay of the waiter; only informative here — the shell reads the env var itself. */
   delaySec: number
   prices: PriceTable
-  /** Let the plugin's mod send pings as `$.model.fork` instead of a wake turn (fork.ts). */
+  /** Let the plugin's mod send pings as `$.model.fork` instead of a wake turn. */
   forkPings: boolean
-  /** Shell command asked before each ping; exit 0 skips it (see veto.ts). */
+  /** Shell command asked before each ping; exit 0 skips it, exit 3 hands off. */
   skipIf?: string
   handoff: HandoffConfig
 }
 
-/** See handoff.ts. Off unless switched on: it costs one extra turn per idle stretch. */
+/** Off unless switched on: it costs one extra turn per idle stretch. */
 export interface HandoffConfig {
   enabled: boolean
   /** Below this the brief would not save enough to pay for itself. */
   minCtxTokens: number
-  /**
-   * Starts a new session from the brief (menu choice 2). Gets CACHE_KEEPER_BRIEF,
-   * CACHE_KEEPER_SESSION_ID, CACHE_KEEPER_TRANSCRIPT_PATH, CACHE_KEEPER_CWD;
-   * its output is shown to the human. Without it choice 2 only writes the file.
-   */
+  /** Starts a new session from the brief (menu choice 2); unset, choice 2 only writes the file. */
   spawnCommand?: string
-  /** Close the old session after a successful spawn. */
   closeAfterSpawn: boolean
-  /**
-   * Closes the old session; gets CACHE_KEEPER_SESSION_ID and CACHE_KEEPER_CLAUDE_PID.
-   * Default: SIGTERM to the session's `claude` process.
-   */
+  /** Closes the old session; unset, SIGTERM to the session's `claude` process. */
   closeCommand?: string
 }
 
 export const DEFAULT_DELAY_SEC = 3000
 
-/** Env var -> threshold key. */
+/** One documented setting; the config docs are rendered from SETTINGS. */
+export interface SettingDoc {
+  /** The config.json key (`handoff.x` for the handoff block), or undefined for an env-only setting. */
+  key?: string
+  /** The env variable that overrides it; `=1` marks a variable whose meaning is inverted. */
+  env?: string
+  /** Shown as the default when the loaded config has no value to show (env-only, or no default). */
+  defaultText?: string
+  meaning: string
+}
+
+/** Every setting a user can change, in the order the docs list them. */
+export const SETTINGS: readonly SettingDoc[] = Object.freeze([
+  { env: 'CACHE_KEEPER_DELAY_SEC', defaultText: `\`${DEFAULT_DELAY_SEC}\``, meaning: 'how long the waiter sleeps after each turn; keep it between `minAgeSec` and `maxAgeSec` (env only: the shell reads it)' },
+  { env: 'CACHE_KEEPER_HOME', defaultText: '`~/.claude-cache-keeper`', meaning: 'state, ledger and `config.json`' },
+  { key: 'enabled', env: 'CACHE_KEEPER_DISABLED=1', meaning: 'master switch' },
+  { key: 'awaySec', env: 'CACHE_KEEPER_AWAY_SEC', meaning: 'idle longer than this = gone' },
+  { key: 'presenceSec', env: 'CACHE_KEEPER_PRESENCE_SEC', meaning: 'idle up to this = at the keyboard' },
+  { key: 'maxAwayPings', env: 'CACHE_KEEPER_MAX_AWAY_PINGS', meaning: 'machine-wide pings per absence' },
+  { key: 'minCtxTokens', env: 'CACHE_KEEPER_MIN_CTX_TOKENS', meaning: 'smallest context worth holding' },
+  { key: 'minAgeSec', env: 'CACHE_KEEPER_MIN_AGE_SEC', meaning: 'earliest ping' },
+  { key: 'maxAgeSec', env: 'CACHE_KEEPER_MAX_AGE_SEC', meaning: 'latest ping' },
+  { key: 'maxPings', env: 'CACHE_KEEPER_MAX_PINGS', meaning: 'pings per idle stretch; unset, it is [tuned](policy.md#the-cap-tunes-itself) from this start, set, the tuning is off' },
+  { key: 'hitRatio', env: 'CACHE_KEEPER_HIT_RATIO', meaning: 'wake turn counts as a hit at `read / (read + write) ≥` this; a value above 1 is ignored' },
+  { key: 'prices', defaultText: 'per model, `src/prices.ts`', meaning: 'USD per million tokens, for `report` and the handoff menu: `{"claude-opus-5-5": {"input": 4, "cacheRead": 0.2, "cacheWrite": 8, "output": 20}}` per model id prefix, or a number for a family (`"opus": 5`: input, with 0.1× read, 2× write, 5× output). No Anthropic API serves prices, so the table is kept by hand; `report` names any model it has no row for' },
+  { key: 'skipIf', env: 'CACHE_KEEPER_SKIP_IF', meaning: 'shell command asked before each ping or due handoff; exit 0 skips, exit 3 hands off (see [How it decides](policy.md))' },
+  { env: 'CACHE_KEEPER_IDLE_SEC', meaning: 'override the presence probe (a number of seconds, or `unknown`)' },
+  { env: 'CACHE_KEEPER_BACKGROUND', meaning: '`0`/`1`: treat the session as interactive / background regardless of `CLAUDE_JOB_DIR` and the transcript' },
+  { key: 'statusLine', meaning: 'show the cache line under the prompt (see [Status line](status-line.md)); only `false` turns it off' },
+  { key: 'band', meaning: 'draw that line above the prompt with buttons instead, where the mod loads (see [The band](status-line.md#the-band-the-same-line-clickable)); `false` keeps it plain text' },
+  { key: 'forkPings', env: 'CACHE_KEEPER_FORK', meaning: 'ping with a fork instead of a wake turn where the plugin\'s mod loads (see [Fork pings](fork-pings.md))' },
+  { key: 'cacheTtlSec', meaning: 'the cache TTL the status line, `/cache-keeper:status`, `/cache-keeper:ping` and the report assume; change it only if yours is not one hour' },
+  { key: 'handoff.enabled', env: 'CACHE_KEEPER_HANDOFF', meaning: 'write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](handoff.md))' },
+  { key: 'handoff.minCtxTokens', env: 'CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS', meaning: 'below this a brief saves too little' },
+  { key: 'handoff.spawnCommand', env: 'CACHE_KEEPER_HANDOFF_SPAWN', meaning: 'shell command starting a new session; gets `CACHE_KEEPER_BRIEF`, `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_TRANSCRIPT_PATH`, `CACHE_KEEPER_CWD`; 45 s at most' },
+  { key: 'handoff.closeAfterSpawn', env: 'CACHE_KEEPER_HANDOFF_CLOSE', meaning: 'close the old session after a successful spawn' },
+  { key: 'handoff.closeCommand', defaultText: 'SIGTERM to the session\'s `claude`', meaning: 'how to close it; gets `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_CLAUDE_PID`' },
+] satisfies SettingDoc[])
+
 export const THRESHOLD_ENV: Readonly<Record<keyof Thresholds, string>> = Object.freeze({
   awaySec: 'CACHE_KEEPER_AWAY_SEC',
   presenceSec: 'CACHE_KEEPER_PRESENCE_SEC',

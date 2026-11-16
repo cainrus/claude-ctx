@@ -1,14 +1,6 @@
 /**
- * One-shot notices: something the keeper did while nobody watched, shown once
- * in each session on its next real prompt (the way Claude Code itself shows a
- * usage warning), then never again in that session.
- *
- *   notices/<id>.json   { id, t, text, sessions?, seenBy[] }
- *
- * `sessions` scopes a notice to the sessions it concerns; without it every
- * session sees it. Notices older than a day are ignored: a session opened
- * tomorrow does not need yesterday's news. Two sessions marking the same
- * notice at once can lose one mark — that session sees it twice, never zero.
+ * Something keeper did while nobody watched is shown once in each session it concerns, on that session's next
+ * real prompt, then never again there. Notices older than a day are dropped.
  */
 
 import { readdirSync, rmSync } from 'node:fs'
@@ -23,6 +15,7 @@ export interface Notice {
   /** Epoch ms. */
   t: number
   text: string
+  /** Unset: every session sees it. */
   sessions?: string[]
   seenBy: string[]
 }
@@ -30,7 +23,6 @@ export interface Notice {
 const dir = (home: string) => join(home, 'notices')
 
 export function postNotice(home: string, text: string, now: number, sessions?: string[]): Notice {
-  // hrtime keeps two notices posted in the same millisecond in posting order.
   const seq = process.hrtime.bigint().toString().padStart(20, '0')
   const notice: Notice = { id: `${now}-${seq}-${randomBytes(2).toString('hex')}`, t: now, text, seenBy: [] }
   if (sessions) notice.sessions = sessions
@@ -38,7 +30,7 @@ export function postNotice(home: string, text: string, now: number, sessions?: s
   return notice
 }
 
-/** Notices this session has not seen yet, marked seen as they are returned. Expired ones are deleted. */
+/** Marks what it returns as seen; deletes expired notices. */
 export function takeNotices(home: string, sessionId: string, now: number): string[] {
   let names: string[]
   try {

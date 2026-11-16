@@ -1,11 +1,8 @@
 /**
- * `/cache-keeper:status`: what keeper thinks of this session and which
- * settings are in force, with where each came from. Answered by the
- * UserPromptSubmit hook, so it costs no model request.
- *
- * The sources follow `loadConfig`'s order (env, then config.json, then the
- * default) and use its parsers, so a value the loader would ignore (a typo, a
- * negative number) reads as not set here too.
+ * `/cache-keeper:status` shows what keeper knows of this session (cached till when, pings used of the cap, context
+ * size, whether pings go as forks, a missed ping, a mute by /cache-keeper:done, the last hook error, a compaction)
+ * and every setting in force with where it came from: `env`, `config.json`, `tuned` (the cap) or `default`.
+ * It warns about settings that leave keeper unable to ping at all. The hook answers it: no model request is made.
  */
 
 import { bool, num, readConfigFile, str, THRESHOLD_ENV, type Config } from './config.ts'
@@ -15,10 +12,9 @@ import { THRESHOLDS, type Thresholds } from './policy.ts'
 import { compactedSinceRequest, forkOwns, warmUntilOf, type SessionState } from './state.ts'
 import { loadTuning } from './tune.ts'
 
-/** Where a setting's value came from; `tuned` is the cap tune.ts chose. */
+/** `tuned` is the cap the tuner chose. */
 export type Source = 'env' | 'config.json' | 'default' | 'tuned'
 
-/** One row of the report's settings table. */
 export interface Setting {
   key: string
   value: string
@@ -27,10 +23,9 @@ export interface Setting {
 
 type Raw = Record<string, unknown>
 
-/** Long commands (`skipIf`, `handoff.spawnCommand`) are cut to keep one line per setting. */
 const MAX_VALUE_CHARS = 60
 
-function show(v: unknown): string {
+function shortValue(v: unknown): string {
   const s = v === undefined ? '-' : String(v)
   return s.length > MAX_VALUE_CHARS ? `${s.slice(0, MAX_VALUE_CHARS - 1)}…` : s
 }
@@ -50,19 +45,18 @@ function isRecord(v: unknown): v is Raw {
   return v !== null && typeof v === 'object' && !Array.isArray(v)
 }
 
-/** The per-stretch cap keeper uses now. Read-only: unlike `tunedMaxPings`, it never recomputes. */
+/** Read-only: unlike `tunedMaxPings`, it never recomputes. */
 export function effectiveMaxPings(config: Config): { value: number; source: 'tuned' | undefined } {
   if (!config.maxPingsAuto) return { value: config.thresholds.maxPings, source: undefined }
   const tuned = loadTuning(config.home)?.maxPings
   return tuned === undefined ? { value: config.thresholds.maxPings, source: undefined } : { value: tuned, source: 'tuned' }
 }
 
-/** Every setting keeper reads, its value in force and where that value came from. */
 export function settingsOf(config: Config, env: NodeJS.ProcessEnv, cap = effectiveMaxPings(config)): Setting[] {
   const file = readConfigFile(config.home)
   const handoff = isRecord(file.handoff) ? file.handoff : {}
   const rows: Setting[] = []
-  const add = (key: string, value: unknown, source: Source) => rows.push({ key, value: show(value), source })
+  const add = (key: string, value: unknown, source: Source) => rows.push({ key, value: shortValue(value), source })
 
   add('enabled', config.enabled, sourceOf(bool, env.CACHE_KEEPER_DISABLED, file.enabled))
   for (const key of Object.keys(THRESHOLDS) as Array<keyof Thresholds>) {
@@ -74,8 +68,8 @@ export function settingsOf(config: Config, env: NodeJS.ProcessEnv, cap = effecti
   add('cacheTtlSec', config.cacheTtlSec, sourceOf(num, undefined, file.cacheTtlSec))
   add('delaySec', config.delaySec, sourceOf(num, env.CACHE_KEEPER_DELAY_SEC, undefined))
   add('forkPings', config.forkPings, sourceOf(bool, env.CACHE_KEEPER_FORK, file.forkPings))
-  // Read by the mod (hooks/status.ts), not by loadConfig: only `false` turns it off.
   add('statusLine', file.statusLine !== false, file.statusLine === false ? 'config.json' : 'default')
+  add('band', file.band !== false, file.band === false ? 'config.json' : 'default')
   add('skipIf', config.skipIf, sourceOf(str, env.CACHE_KEEPER_SKIP_IF, file.skipIf))
   add('handoff.enabled', config.handoff.enabled, sourceOf(bool, env.CACHE_KEEPER_HANDOFF, handoff.enabled))
   add('handoff.minCtxTokens', config.handoff.minCtxTokens, sourceOf(num, env.CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS, handoff.minCtxTokens))
@@ -84,7 +78,6 @@ export function settingsOf(config: Config, env: NodeJS.ProcessEnv, cap = effecti
   return rows
 }
 
-/** What keeper knows of this session, one `label: value` line each. */
 export function sessionLines(state: SessionState | undefined, config: Config, now: number, maxPings: number): string[] {
   if (!config.enabled) return ['keeper is off (enabled: false): nothing is pinged']
   const warmUntil = warmUntilOf(state, config.cacheTtlSec)
@@ -126,7 +119,6 @@ export function configWarnings(config: Config): string[] {
   return out
 }
 
-/** The whole `/cache-keeper:status` reply. */
 export function statusReport(state: SessionState | undefined, config: Config, env: NodeJS.ProcessEnv, now: number): string {
   const cap = effectiveMaxPings(config)
   const rows = settingsOf(config, env, cap)

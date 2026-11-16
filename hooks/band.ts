@@ -1,22 +1,17 @@
 /**
- * The clickable form of the status line: a row above the prompt, drawn where
- * the mod runs. Without the mod there is no row and no status line; the
- * commands (`/cache-keeper:status|ping|done`) are the whole interface then.
+ * Where the mod loads, the status line moves above the prompt as a row of
+ * buttons, `◉ 14:05 ↻3 ✓ ?`, and the status line keeps errors only:
  *
- *   ◉ 14:05  ↻3  ✓  ?        warm till 14:05, 3 pings left, done, legend
- *   ◉ 14:05 final  ✓  ?      no ping is coming: 14:05 is final
- *   ◉ 14:05 final  ✓ done ?  muted by /cache-keeper:done (or ✓ pressed)
- *   ○ cache expired  ?       the next turn rewrites the context
- *   ○ ready  ?               nothing sent in this session yet
+ * - `◉ 14:05`: warm till 14:05 (`○ ready`, `○ cache expired` as above); `final`
+ *   after it when no ping is coming.
+ * - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
+ *   3 pings are left. Dim while a turn runs.
+ * - `✓`: press to stop keeping this session, as `/cache-keeper:done` does;
+ *   `✓ done` once it is.
+ * - `?`: press to pin the legend; hovering the row shows it too.
  *
- *   ↻N  press: ping now, as `/cache-keeper:ping` does, by a fork (no turn)
- *   ✓   press: stop keeping this session, as `/cache-keeper:done` does
- *   ?   press: pin the legend; hovering the row shows it too
- *
- * status.ts computes the line and hands it here (`setBand`); the row redraws on
- * each hand-over. `"band": false` in config.json puts the line back on the
- * status line as plain text. Every failure draws nothing: the band must never
- * break a session.
+ * Without the mod there is no row and no line: the commands are the interface.
+ * `"band": false` in config.json keeps the plain-text line instead.
  */
 
 import type { EngineInterface as $ } from 'claude-code'
@@ -138,6 +133,7 @@ export async function renderBand<E extends { props: { hasSurvey: boolean; isWork
       : h(Box, { display: 'none', hover: { display: 'flex' } }, h(Text, { dimColor: true }, LEGEND))
     return h(Box, { key: 'cache-keeper', flexDirection: 'column' }, h(Box, null, ...row), legend) as R
   } catch {
+    // INVARIANT: a failure draws what the engine would: the band must never break a session.
     return next(e)
   }
 }

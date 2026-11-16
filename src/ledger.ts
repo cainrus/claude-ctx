@@ -1,40 +1,33 @@
-/**
- * Append-only decision log, `$CACHE_KEEPER_HOME/ledger.jsonl`.
- *
- * Lines are small and appended with O_APPEND, so concurrent hooks interleave
- * whole lines. Readers skip anything that does not parse.
- */
+/** Every decision is one line appended to `$CACHE_KEEPER_HOME/ledger.jsonl`, which `cache-keeper report` reads. */
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { SKIP_REASONS, type SkipReason } from './policy.ts'
 
-/**
- * The policy's reasons, then the external `skipIf` answers (see veto.ts): `skip-if` = do not ping,
- * `holder` = do not ping, the session's holder wants a handoff instead.
- */
-/** `compacted`: the context was compacted since the last request, so nothing of it is cached (commands.ts). */
+/** Policy reasons, then `skip-if` (skipIf exit 0), `holder` (exit 3), `compacted` (nothing of the context cached). */
 export const REFUSAL_REASONS = [...SKIP_REASONS, 'skip-if', 'holder', 'compacted'] as const
 export type RefusalReason = SkipReason | 'skip-if' | 'holder' | 'compacted'
 
-export type LedgerEvent =
-  | 'ping'
-  | 'skip'
-  | 'resume'
-  | 'resume-paid'
-  | 'wake-hit'
-  | 'wake-miss'
-  | 'handoff-request'
-  | 'handoff-ready'
-  | 'handoff-here'
-  | 'handoff-new'
-  | 'handoff-failed'
-  | 'done'
-  | 'fork-failed'
-  | 'renew'
-  | 'manual-ping'
-  /** A hook threw (errors.ts); `detail` is `<hook>: <message>`. */
-  | 'error'
+export const LEDGER_EVENTS = Object.freeze({
+  ping: 'a ping went out; `pings` is its place in the idle stretch, `transport: "fork"` when it was a fork',
+  skip: 'no ping; `reason` names the policy row that refused it (see [How it decides](policy.md))',
+  resume: 'a real prompt ended an idle stretch that had pings; `pings` spent, `lastPingHit`; `detail: "question"` for an answer to a waiting question',
+  'resume-paid': 'what the first request of that resumed turn really paid (`cacheRead`, `cacheWrite`)',
+  'wake-hit': 'a ping read the cache; its usage is the cost line; `detail: "handoff"` for a brief turn',
+  'wake-miss': 'a ping found the cache gone and wrote it again; mutes the session',
+  'handoff-request': 'instead of letting the cache go, the brief turn was sent',
+  'handoff-ready': 'the brief is on disk',
+  'handoff-here': 'the menu was answered with continue here (`detail: "unattended"` in a background session)',
+  'handoff-new': 'the menu was answered with a new session, and `spawnCommand` started it',
+  'handoff-failed': 'no brief, or the new session did not start; `failure` says which step',
+  done: '`/cache-keeper:done`: no pings until the next real prompt',
+  'fork-failed': 'a fork brought no reply; `failure` is its reason, `next` what follows (`retry`, `turn`, `drop`)',
+  renew: 'a compaction after an hour held by forks alone was put off behind one wake turn',
+  'manual-ping': '`/cache-keeper:ping`; not scored, its cost is in the ping cost',
+  error: 'a hook threw (errors.ts); `detail` is `<hook>: <message>`',
+} as const)
+
+export type LedgerEvent = keyof typeof LEDGER_EVENTS
 
 export interface LedgerEntry {
   /** ISO timestamp. */
@@ -71,6 +64,7 @@ export function ledgerPath(home: string): string {
 
 export function appendLedger(home: string, entry: LedgerEntry): void {
   mkdirSync(home, { recursive: true })
+  // INVARIANT: one small line per O_APPEND write, so concurrent hooks interleave whole lines.
   appendFileSync(ledgerPath(home), `${JSON.stringify(entry)}\n`)
 }
 
@@ -82,7 +76,6 @@ export function parseLedger(text: string): LedgerEntry[] {
       const e = JSON.parse(line)
       if (e && typeof e.t === 'string' && typeof e.event === 'string' && typeof e.sessionId === 'string') out.push(e)
     } catch {
-      // a torn or foreign line: skip it
     }
   }
   return out

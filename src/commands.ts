@@ -1,14 +1,4 @@
-/**
- * The hook subcommands. Each takes the parsed hook input plus an explicit
- * context (clock, config, presence probe, stderr) and returns an exit code, so
- * the whole flow runs in-process under test without Claude Code.
- *
- *   Stop              -> record   (sync)   remember when the cache was touched, score a wake
- *   Stop              -> wake     (after `sleep`, asyncRewake) decide, maybe exit 2
- *   UserPromptSubmit  -> touch             a real prompt closes the idle stretch
- *   mod (hooks/gate.ts) -> gate            `!`, a slash command or a compaction is about to reach the model
- *   SessionEnd        -> end               forget the session
- */
+/** The hook subcommands (record, wake, touch, gate, end): hook input plus an explicit context in, exit code out. */
 
 import type { Config } from './config.ts'
 import { handoffMessage, interceptPrompt, requestHandoff, settleHandoff, wantsHandoff, type HandoffIO } from './handoff.ts'
@@ -46,7 +36,6 @@ export interface HookInput {
   gate_turn?: boolean
 }
 
-/** How long after a gated turn its Stop is still recognised as the gate's own. */
 const GATE_STOP_WINDOW_MS = 30_000
 
 export interface Ctx {
@@ -56,13 +45,13 @@ export interface Ctx {
   /** Keyboard idle seconds, null = unknown. Called at most once per wake. */
   idleSeconds: () => number | null
   stderr: (text: string) => void
-  /** Blocking sleep, injectable for tests. Defaults to Atomics.wait. */
+  /** Blocking sleep; defaults to Atomics.wait. */
   sleepMs?: (ms: number) => void
   /** The `skipIf` veto; asked only when a ping or a handoff would go out. */
   skipIf?: (facts: SessionFacts) => Verdict
   /** Hook stdout (UserPromptSubmit JSON). */
   stdout?: (text: string) => void
-  /** Spawn and close for the handoff menu (see handoff-run.ts). */
+  /** Spawn and close for the handoff menu. */
   handoffIO?: HandoffIO
   /** Is this a background session, nobody at its input box (presence.ts)? Asked only at the menu. */
   background?: (transcriptPath?: string) => boolean
@@ -76,16 +65,10 @@ const blockingSleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArra
 export const TRANSCRIPT_CATCH_UP_MS = 3000
 const CATCH_UP_STEP_MS = 100
 
-/**
- * The Stop hook can run before Claude Code has flushed the assistant entry of
- * the turn it closes (seen live: the entry's timestamp predates the hook, the
- * line is not on disk yet). Reading then returns the PREVIOUS turn's usage —
- * for a wake, the previous wake's numbers. So poll until an entry at least as
- * new as the prompt that started this turn shows up; undefined when it never
- * does, so the caller can record "not scored" instead of stale numbers.
- */
 function usageSince(path: string, sinceMs: number, ctx: Ctx) {
   const sleep = ctx.sleepMs ?? blockingSleep
+  // WORKAROUND: the Stop hook can run before Claude Code flushed the turn's assistant entry (seen live), and a read then
+  // returns the PREVIOUS turn's usage. Poll for an entry no older than the turn's start; undefined = record it unscored.
   for (let waited = 0; ; waited += CATCH_UP_STEP_MS) {
     const usage = lastMainUsage(path)
     if (usage && (usage.timestamp === undefined || usage.timestamp >= sinceMs)) return usage
@@ -101,7 +84,6 @@ export function isWakePrompt(prompt: string | undefined): boolean {
   return typeof prompt === 'string' && prompt.includes(WAKE_MARKER)
 }
 
-/** The plugin's `/cache-keeper:done`. The hook sees the typed line itself (measured on 2.1.30x). */
 export const DONE_COMMAND = '/cache-keeper:done'
 
 function isCommand(prompt: string | undefined, command: string): boolean {
@@ -114,28 +96,23 @@ export function isDoneCommand(prompt: string | undefined): boolean {
   return isCommand(prompt, DONE_COMMAND)
 }
 
-/** `/cache-keeper:status`: answered by the prompt hook, like `done`. */
+/** Answered by the prompt hook itself, like `done`. */
 export const STATUS_COMMAND = '/cache-keeper:status'
 
 export function isStatusCommand(prompt: string | undefined): boolean {
   return isCommand(prompt, STATUS_COMMAND)
 }
 
-/**
- * `/cache-keeper:ping`: the prompt hook lets it through and the plugin's mod
- * answers its turn with a fork (hooks/keepalive.ts). Where the mod does not
- * load, commands/ping.md reaches the model as a wake turn, which reads the
- * cache too. A turn may carry the typed line, the command's tag, or the
- * file's body, which starts with PING_MARKER. hooks/keepalive.ts `isPingTurn`
- * is the mod's copy of this test; keep the two in step.
- */
+/** Let through by the prompt hook: the mod answers its turn with a fork, or commands/ping.md reaches the model as a wake turn. */
 export const PING_COMMAND = '/cache-keeper:ping'
+/** How commands/ping.md's body starts. */
 export const PING_MARKER = '[cache-keeper:ping]'
 
+/** The typed line, the command's tag, or the command file's body. */
 export function isPingCommand(prompt: string | undefined): boolean {
+  // INVARIANT: hooks/keepalive.ts `isPingTurn` is the mod's copy of this test; keep the two in step.
   if (typeof prompt !== 'string') return false
   if (isCommand(prompt, PING_COMMAND)) return true
-  // Anchored at the start, so a message that merely quotes the marker or the tag is a message.
   const p = prompt.trim()
   return p.startsWith(PING_MARKER) || (p.startsWith('<command-') && p.includes(`<command-name>${PING_COMMAND}</command-name>`))
 }
@@ -151,7 +128,7 @@ export function record(input: HookInput, ctx: Ctx): number {
   const state = loadSession(home, sid) ?? newSession(sid)
   if (input.transcript_path) state.transcriptPath = input.transcript_path
 
-  // A turn the gate answered with the menu never reached the model: it touched nothing.
+  // INVARIANT: a turn the gate (or the mod) answered never reached the model: its Stop must not read as a touched cache.
   if (state.gateTurnAt !== undefined) {
     const own = ctx.now - state.gateTurnAt < GATE_STOP_WINDOW_MS
     delete state.gateTurnAt
@@ -161,20 +138,13 @@ export function record(input: HookInput, ctx: Ctx): number {
     }
   }
 
-  // The turn this Stop closes began at our wake (pendingPing) or at the last
-  // real prompt; its assistant entry cannot be older than that.
   const turnBegan = state.pendingPing && state.pingTransport !== 'fork' ? (state.lastPingAt ?? 0) : (state.lastHumanAt ?? 0)
   const usage = state.transcriptPath ? usageSince(state.transcriptPath, turnBegan, ctx) : undefined
 
-  // The cache was last touched by the request that produced the last assistant
-  // entry, so its timestamp — not this hook's clock — is when the TTL restarted.
-  // Using it also keeps the sleeper started by this very Stop from racing this
-  // write: with delay == minAgeSec, "now" here could land a few hundred ms
-  // after the sleeper began and make it look stale. An entry older than the
-  // last human prompt means the transcript has not caught up yet: use now.
+  // WARNING: the TTL restarted at the last assistant entry's timestamp, not this hook's clock. With delay == minAgeSec,
+  // "now" could land after the sleeper this Stop started and make it look stale. An entry older than the last prompt = not caught up: now.
   const ts = usage?.timestamp
   state.lastTurnEndAt = ts !== undefined && ts >= (state.lastHumanAt ?? 0) ? Math.min(ts, ctx.now) : ctx.now
-  // A turn is a request Claude Code saw itself: its compaction trusts the cache again.
   state.lastRequestAt = state.lastTurnEndAt
   state.forkPingsHeld = 0
 
@@ -183,15 +153,10 @@ export function record(input: HookInput, ctx: Ctx): number {
     if (usage.model) state.model = usage.model
   }
 
-  // Only a Stop that follows our own wake is scored. `stop_hook_active` alone
-  // is also set when some other Stop hook blocked the turn; scoring that turn
-  // could record a spurious miss and mute this session for good.
-  // A fork ping is scored by `forked`: a Stop never closes one.
+  // INVARIANT: only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook
+  // may have blocked the turn: a spurious miss would mute the session for good). A fork is scored by `forked`.
   const closedWake = state.pendingPing && state.pingTransport !== 'fork'
   if (closedWake) {
-    // Scored only when it was keeper's own ping. A `/cache-keeper:ping` the model answered
-    // (its fork failed, or forks are off) is `manual-ping`; a handoff turn writes a brief
-    // and keeps its cost in the report, but is no ping: it neither mutes nor counts as a hit.
     const manual = state.pingManual === true
     const handoffTurn = state.handoffPending === true
     closePing(state)
@@ -214,7 +179,6 @@ export function record(input: HookInput, ctx: Ctx): number {
     }
   }
 
-  // The first real turn after a pinged stretch: log what it actually paid for the held prefix.
   if (!closedWake && state.resumeAt !== undefined) {
     const paid = usage && state.transcriptPath ? firstMainUsageSince(state.transcriptPath, state.resumeAt) : undefined
     if (paid) {
@@ -233,7 +197,6 @@ export function record(input: HookInput, ctx: Ctx): number {
 
   const handoff = closedWake && state.handoffPending === true
   state.handoffPending = false
-  // A turn recorded end to end: whatever failed before is not failing now, and no question is pending.
   delete state.lastError
   delete state.waitingSince
   saveSession(home, state)
@@ -244,11 +207,7 @@ export function record(input: HookInput, ctx: Ctx): number {
 /** A ping sent this recently and not scored yet is still on its way: a second one would double it. */
 export const PING_IN_FLIGHT_MS = 10 * 60_000
 
-/**
- * What a wake decided. `ping` and `handoff` are already recorded (state and
- * ledger); the caller only delivers them. `retryInSec`: the stretch is not due
- * yet, ask again then (only the mod's timer uses it; a Stop sleeper is re-armed by its Stop).
- */
+/** `ping` and `handoff` arrive already recorded, the caller only delivers them; `retryInSec` is for the mod's timer. */
 export type WakeOutcome = { kind: 'none'; retryInSec?: number } | { kind: 'ping' } | { kind: 'handoff'; message: string }
 
 /** After the sleep: decide whether this idle session gets a ping (exit 2) or not (exit 0). */
@@ -256,7 +215,6 @@ export function wake(input: HookInput, ctx: Ctx): number {
   const sid = input.session_id
   if (!sid) return 0
   const state = loadSession(ctx.config.home, sid)
-  // The mod took this stretch: its timer sends the ping as a fork.
   if (state && forkOwns(state, ctx.config)) return 0
   const out = decideWake(input, ctx, 'turn')
   if (out.kind === 'none') return 0
@@ -272,11 +230,9 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
   const state = loadSession(home, sid)
   if (!state || state.lastTurnEndAt === undefined) return { kind: 'none' }
   if (state.pendingPing && ctx.now - (state.lastPingAt ?? 0) < PING_IN_FLIGHT_MS) return { kind: 'none' }
-  // A turn held open by a question (fork.ts waitStart): only a fork may hold it, never a wake turn.
+  // INVARIANT: a turn held open by a question (fork.ts waitStart) takes only forks: a wake turn or a handoff would land inside it.
   if (state.waitingSince !== undefined && transport === 'turn') return { kind: 'none' }
 
-  // A newer turn ended (or started) since this sleeper was armed: its own
-  // sleeper owns the session now.
   const ageSec = secondsBetween(state.lastTurnEndAt, ctx.now)
   const turnStartedSince = (state.lastHumanAt ?? 0) > state.lastTurnEndAt
   if (turnStartedSince) return { kind: 'none' }
@@ -295,7 +251,6 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
     saveAwayBudget(home, budget)
   }
 
-  // Asked only here, past the stale-sleeper exit, so a stale sleeper never reads the ledger.
   const limits = ctx.config.maxPingsAuto ? { ...thresholds, maxPings: tunedMaxPings(ctx.config, ctx.now) } : thresholds
   const decision = decide(
     {
@@ -312,8 +267,6 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
 
   const base = { t: iso(ctx.now), sessionId: sid, ctxTokens: state.ctxTokens, ageSec, model: state.model, awaySeconds }
   const facts = { sessionId: sid, transcriptPath: state.transcriptPath, lastPromptAt: state.lastHumanAt }
-  // The keeper is letting a warm cache go: spend its last warm turn on a summary instead.
-  // Not while a question holds the turn open: a handoff is a turn, and none may land inside it.
   const handoffDue = (reason: RefusalReason): boolean =>
     state.waitingSince === undefined &&
     state.transcriptPath !== undefined &&
@@ -327,7 +280,6 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
       },
       ctx.config,
     )
-  // A handoff needs a turn (the model writes the brief), whatever the transport.
   const startHandoff = (auto: boolean): WakeOutcome => {
     const path = requestHandoff(home, state, ctx.now, auto)
     state.pendingPing = true
@@ -347,10 +299,8 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
     appendLedger(home, { ...base, event: 'skip', reason: decision.reason })
     return { kind: 'none' }
   }
-  // Last, so the command runs only for a ping that would really go out.
   const verdict = ctx.skipIf?.(facts) ?? 'ping'
   if (verdict !== 'ping') {
-    // 'handoff': someone else holds this session and does not want it kept warm.
     if (verdict === 'handoff' && handoffDue('holder')) return startHandoff(true)
     appendLedger(home, { ...base, event: 'skip', reason: verdict === 'handoff' ? 'holder' : 'skip-if' })
     return { kind: 'none' }
@@ -372,18 +322,12 @@ export function decideWake(input: HookInput, ctx: Ctx, transport: 'turn' | 'fork
   return { kind: 'ping' }
 }
 
-/**
- * UserPromptSubmit: a real prompt closes the idle stretch. The wake turn's own
- * prompt is ignored. A prompt into a cold cache with a handoff brief waiting is
- * blocked first (see handoff.ts) and then changes nothing here: it never ran.
- */
+/** UserPromptSubmit: a real prompt closes the idle stretch, unless the handoff menu blocks it first. */
 export function touch(input: HookInput, ctx: Ctx, gate = false): number {
   const sid = input.session_id
-  // A ping is not a resume: its turn is the mod's (or a wake turn), and the stretch goes on.
   if (!sid || isWakePrompt(input.prompt) || isPingCommand(input.prompt)) return 0
   const { home } = ctx.config
 
-  // Read-only, answered here: no model request, the stretch stays open.
   if (isStatusCommand(input.prompt)) {
     const s = loadSession(home, sid)
     ctx.stdout?.(`${JSON.stringify({ decision: 'block', reason: statusReport(s, ctx.config, ctx.env ?? process.env, ctx.now) })}\n`)
@@ -397,8 +341,6 @@ export function touch(input: HookInput, ctx: Ctx, gate = false): number {
   const state = loadSession(home, sid) ?? newSession(sid)
   if (input.transcript_path) state.transcriptPath = input.transcript_path
 
-  // Answered here and blocked, so the command costs no model request and the
-  // idle stretch it mutes stays open (it is not a resume).
   if (isDoneCommand(input.prompt)) {
     state.doneAt = ctx.now
     saveSession(home, state)
@@ -436,7 +378,6 @@ export function touch(input: HookInput, ctx: Ctx, gate = false): number {
 
   state.pingsSoFar = 0
   closePing(state)
-  // A mod-answered turn that ended with no Stop (Esc, a reload) left its mark: this prompt's Stop is its own.
   delete state.gateTurnAt
   state.handoffRequested = false
   state.handoffPending = false
@@ -445,7 +386,6 @@ export function touch(input: HookInput, ctx: Ctx, gate = false): number {
   state.lastHumanAt = ctx.now
   saveSession(home, state)
 
-  // A gate has no way to show notices, so it must not consume them.
   const notes = gate ? [] : takeNotices(home, sid, ctx.now)
   const context = [...notes, ...(held?.context ? [held.context] : [])]
   if (context.length > 0) {
@@ -458,18 +398,12 @@ export function touch(input: HookInput, ctx: Ctx, gate = false): number {
   return 0
 }
 
-/**
- * The mod's gate (hooks/gate.ts): what UserPromptSubmit never sees — a `!`
- * command, a slash command, a compaction — is about to start a model request.
- * `prompt` is whatever the mod can tell of it (the turn's first text, or the
- * command line); it plays the held message. Same decision as `touch`, same
- * JSON on stdout; nothing is printed to let the request go.
- */
+/** The mod's gate for what UserPromptSubmit never sees (`!`, a slash command, a compaction): `touch`'s decision and JSON. */
 export function gate(input: HookInput, ctx: Ctx): number {
   return touch(input, ctx, true)
 }
 
-/** SessionEnd: drop the session's state. A sleeper still pending will find nothing and exit 0. */
+/** SessionEnd: drop the session's state; a sleeper still pending finds nothing and exits 0. */
 export function end(input: HookInput, ctx: Ctx): number {
   if (input.session_id) deleteSession(ctx.config.home, input.session_id)
   return 0

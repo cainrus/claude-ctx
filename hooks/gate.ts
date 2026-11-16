@@ -1,27 +1,16 @@
 /**
- * The mod half of the plugin. `UserPromptSubmit` fires for a typed prompt and for
- * skills (`/simplify`), but never for a `!` command or a built-in slash command
- * (measured on Claude Code 2.1.301), so those hit a cold cache with no menu.
- * These hooks ask `cache-keeper gate` at the points where such input does reach
- * the model:
- *
- *   turn.step         the first model request of a turn: `!` commands, whatever
- *                     else started a turn without a prompt hook. A refusal is
- *                     answered here, so no request is sent. `/cache-keeper:ping`'s
- *                     turn is answered here too, by a fork (keepalive.ts).
- *   session.compact   `/compact`, which sends the whole context cold.
- *
- * Every hook fails open: a broken gate lets the input through.
- *
- * It is also the plugin's one hooks module, so `session.start` and
- * `turn.complete` here call the fork pings (keepalive.ts) and the status line
- * (status.ts), and `session.compact` asks keepalive.ts after the gate.
+ * The gate: a `!` command, a built-in slash command and `/compact` reach the
+ * model without the `UserPromptSubmit` hook, so they would hit a cold cache with
+ * no menu. The gate asks keeper at the first model request of such a turn and
+ * before a manual `/compact`, and stops the input just as a typed prompt would be
+ * stopped: the menu when a handoff brief waits on a cold cache (`handoff.enabled`),
+ * or keeper's own answer to `/cache-keeper:status`. It runs where Claude Code
+ * loads the plugin's mod; any failure lets the input through.
  */
 
 import type { EngineInterface, Register } from 'claude-code'
-// The `.ts` suffix is what Node needs to load these under `npm test`; the
-// validator's own compiler options do not allow it (TS5097), and it reads no tsconfig of ours.
-// Each import stays on one line: @ts-ignore covers the next line only.
+// WORKAROUND: Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and
+// reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
 // @ts-ignore TS5097
 import { beforeCompact, isPingTurn, keepaliveCompacted, keepaliveStarted, keepaliveTurnDone, keepaliveWaitEnd, keepaliveWaitStart, manualPing } from './keepalive.ts'
 // @ts-ignore TS5097
@@ -29,14 +18,11 @@ import { refresh, statusRequested, statusStarted, statusTurnDone } from './statu
 // @ts-ignore TS5097
 import { renderBand } from './band.ts'
 
-/** The spawn behind menu choice 2 may take a while (handoff-run.ts allows it 45 s). */
 const GATE_TIMEOUT_MS = 60_000
 
-/** Held in the record and written into the continue file: enough to recognise it. */
 const HELD_CHARS = 4000
 
-/** The reason to show when the gate stopped the input, else undefined. */
-async function ask($: EngineInterface, text: string, turn = false): Promise<string | undefined> {
+async function askGate($: EngineInterface, text: string, turn = false): Promise<string | undefined> {
   try {
     const sessionId = await $.session.id()
     const { exitCode, stdout } = await $.process.run(
@@ -47,15 +33,14 @@ async function ask($: EngineInterface, text: string, turn = false): Promise<stri
     const out = JSON.parse(stdout)
     return out.decision === 'block' && typeof out.reason === 'string' ? out.reason : undefined
   } catch {
-    // A timeout, a spawn failure or output that is not JSON: let the input through.
+    // INVARIANT: fail open: a timeout, a spawn failure or output that is not JSON lets the input through.
     return undefined
   }
 }
 
 export const register: Register = on => {
-  // A plugin loads one hooks module with one hook per event, so the other
-  // halves are called from here: the fork pings (keepalive.ts) and the pinned
-  // "cached till 14:05" line (status.ts).
+  // WARNING: a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts)
+  // and the status line (status.ts) are called from these hooks.
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     statusStarted($)
@@ -70,10 +55,8 @@ export const register: Register = on => {
     return done
   })
 
-  // The status line with buttons, above the prompt (band.ts).
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => renderBand($, e, next, () => refresh($)))
 
-  // The text a turn began with: turn.step does not carry it.
   const began = new Map<string, string>()
 
   on('turn.start', ($, e, next) => {
@@ -81,25 +64,23 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // WORKAROUND: UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on
+  // Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
   on('turn.step', async function* ($, e, next) {
     if (e.agentId === undefined && e.index === 0) {
       const text = began.get(e.turnId) ?? ''
       began.delete(e.turnId)
-      // `/cache-keeper:ping`: a fork answers it; undefined lets it reach the model as a wake turn.
-      const reason = isPingTurn(text) ? await manualPing($) : await ask($, text, true)
+      const reason = isPingTurn(text) ? await manualPing($) : await askGate($, text, true)
       if (reason !== undefined) {
         yield { kind: 'text', index: 0, text: reason }
         yield { kind: 'stop', stopReason: 'end_turn', usage: null }
         return { turnId: e.turnId, index: e.index, answer: reason, toolUses: [], stopReason: 'end_turn', usage: null }
       }
     }
-    // The request goes out: the cache is written now, long before the turn's Stop records it.
     if (e.agentId === undefined) void statusRequested($)
     return yield* next(e)
   })
 
-  // A question for the person holds the turn open: no Stop, so no sleeper and no
-  // turn.complete. Keep the cache warm by fork while the answer is awaited.
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     await keepaliveWaitStart($)
     try {
@@ -111,7 +92,7 @@ export const register: Register = on => {
 
   on('session.compact', async ($, e, next) => {
     if (e.trigger === 'manual' && e.agentId === undefined) {
-      const reason = await ask($, '/compact')
+      const reason = await askGate($, '/compact')
       if (reason !== undefined) return { skip: reason }
     }
     const renewFirst = await beforeCompact($, e)

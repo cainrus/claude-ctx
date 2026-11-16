@@ -1,38 +1,22 @@
 /**
- * Pings as `$.model.fork` (src/fork.ts). A fork replays the main thread's last
- * request with one question after it: the API reads the prefix from the
- * cache and renews it, and nothing lands in the transcript. This file only
- * keeps the timer and makes the calls; every decision is the CLI's, the same
- * one the Stop sleeper asks. gate.ts, the plugin's one hooks module, wires it in.
- *
- *   turn.complete    `arm`: the mod takes the stretch, the next ping is due one delay on
- *   session.start    `arm` after a reload, which drops this module's timers
- *   timer            `fork-wake`, then `$.model.fork`, then `forked` to score it.
- *                    A fork with no reply is sent again (`fork-retry`) while it can still
- *                    land warm, then falls back to the wake turn, or to nothing past maxAgeSec
- *   session.compact  `compact-check` (via gate.ts): after a stretch held by forks
- *                    alone, one wake turn goes first (anthropics/claude-code#105017);
- *                    `compacted` once it ran: the next ping is a wake turn
- *   turn.step        `/cache-keeper:ping` (via gate.ts, `manualPing`): `ping-now`, then
- *                    `$.model.fork`, then `forked`; the fork's line answers the turn
- *
- * Every step fails safe: a CLI that does not answer leaves the stretch
- * unpinged (cheap), never a second ping. Where the module does not load,
- * nothing arms, and the Stop sleeper pings with a wake turn as before.
+ * Fork pings, the mod side: where Claude Code loads the plugin's mod, keeper pings
+ * by forking the main thread's last request with one short question. The API
+ * reads the prefix from the cache and renews it, and nothing lands in the
+ * transcript. The timer is armed at each turn's end, on session start and while
+ * AskUserQuestion waits for an answer; `/cache-keeper:ping` sends one now. Every
+ * decision is keeper's, as for the Stop hook's wake turns, and a step that fails
+ * sends nothing. `"forkPings": false` in config.json pings with wake turns instead.
  */
 
 import type { EngineInterface, EventOf, EventResult, ModelForkResult } from 'claude-code'
 
 type $ = EngineInterface
-/** `$.model.fork`'s result, or what `fork` below makes of a timeout or a throw. */
 type ForkOutcome = ModelForkResult | { isAnswered: false; reason: 'timeout' | 'threw' }
 
 const CLI_TIMEOUT_MS = 20_000
-/** `$.session.compact` rejects while a turn runs; turn.complete may come just before it is over. */
 const COMPACT_RETRY_MS = [1_000, 3_000, 10_000]
-/** `$.model.fork` has no timeout of its own (anthropics/claude-code#101446). */
+// WORKAROUND: `$.model.fork` has no timeout of its own (anthropics/claude-code#101446).
 const FORK_TIMEOUT_MS = 120_000
-/** A put-off compaction older than this is dropped: its renewing turn never ended. */
 const COMPACT_AFTER_TURN_MS = 120_000
 
 type Answer =
@@ -43,12 +27,10 @@ type Answer =
   | { action: 'renew'; text: string }
   | { action: 'retry'; afterSec: number }
 
-// One copy per load: a reload starts these over, and session.start re-arms.
 let timer: { cancel: () => void } | undefined
 let forking = false
-/** A question was answered and its turn has not ended yet: nothing arms until turn.complete. */
+// INVARIANT: once a question is answered nothing arms until its turn's turn.complete: a fork's result would re-arm inside the turn.
 let answered = false
-/** A compaction put off behind a renewing turn: run it when that turn ends. */
 let compactAfterTurn: { instructions?: string; at: number } | undefined
 
 async function cli($: $, cmd: string, payload: Record<string, unknown> = {}): Promise<Answer | undefined> {
@@ -71,11 +53,10 @@ function schedule($: $, sec: number | undefined): void {
 }
 
 function submit($: $, text: string): void {
-  // Not awaited: it resolves only once the turn starts, after the calling hook.
+  // WARNING: not awaited: it resolves only once the turn starts, which is after the calling hook returns.
   void $.prompt.submit({ text }).catch(() => {})
 }
 
-/** Re-arm from a tick, unless a turn ended meanwhile and armed a timer of its own. */
 function reschedule($: $, sec: number | undefined): void {
   if (timer === undefined && sec !== undefined && !answered) schedule($, sec)
 }
@@ -96,7 +77,6 @@ async function fork($: $, prompt: string): Promise<ForkOutcome> {
   }
 }
 
-/** `$.model.fork`'s result in the shape the CLI's `forked` reads. */
 function forkResult(r: ForkOutcome) {
   return r.isAnswered ? { isAnswered: true, usage: r.usage } : { isAnswered: false, reason: r.reason }
 }
@@ -109,7 +89,6 @@ async function tick($: $): Promise<void> {
   if (a?.action === 'fork') await sendFork($, a.prompt)
 }
 
-/** `forked` answered `retry`: ask `fork-retry` once the pause is over. */
 async function retryTick($: $): Promise<void> {
   timer = undefined
   const a = await cli($, 'fork-retry')
@@ -127,15 +106,9 @@ async function sendFork($: $, prompt: string): Promise<void> {
   const s = await cli($, 'forked', { fork: forkResult(r) })
   if (s?.action === 'turn') return submit($, s.text)
   if (s?.action === 'none') return reschedule($, s.dueInSec)
-  // On `timer`, so a turn that ends meanwhile cancels it by arming its own.
   if (s?.action === 'retry' && timer === undefined && !answered) timer = $.clock.after(s.afterSec * 1000, () => void retryTick($))
 }
 
-/**
- * The put-off compaction. The engine does not raise a plugin's own call in its
- * own hooks (measured: "skipped: re-entry"), so gate.ts never sees this one
- * and `compacted` is reported from here.
- */
 async function compactLater($: $, instructions: string | undefined): Promise<void> {
   for (const ms of COMPACT_RETRY_MS) {
     await $.clock.sleep(ms)
@@ -143,9 +116,10 @@ async function compactLater($: $, instructions: string | undefined): Promise<voi
     try {
       result = await $.session.compact(instructions === undefined ? {} : { instructions })
     } catch {
-      // A turn is still running: try again a little later.
       continue
     }
+    // WORKAROUND: the engine does not raise a plugin's own compaction in its own hooks (measured: "skipped:
+    // re-entry"), so gate.ts never sees this one and `compacted` is reported from here.
     if (result?.skip === undefined) await cli($, 'compacted')
     return
   }
@@ -163,79 +137,56 @@ async function afterTurn($: $, claim: boolean): Promise<void> {
   }
 }
 
-/** Called by gate.ts's `session.start` hook, after the engine started: a reload drops the timer. */
+/** Run by gate.ts's `session.start` hook, after the engine started. */
 export function keepaliveStarted($: $): void {
-  // Detached, so the session's start is not held by a process spawn.
   $.clock.after(0, async () => {
     const a = await cli($, 'arm', { reload: true })
     if (a?.action === 'none') schedule($, a.dueInSec)
   })
 }
 
-/** Called by gate.ts's `turn.complete` hook, after the engine finished the turn. */
+/** Run by gate.ts's `turn.complete` hook, after the engine finished the turn. */
 export function keepaliveTurnDone($: $, e: EventOf['turn.complete']): void {
-  // Detached, so the turn's end is not held by a process spawn.
-  // A turn ending under a fork in flight does not claim (the fork's own result re-arms).
+  // INVARIANT: a turn ending under a fork in flight does not claim: the fork's own result re-arms.
   if (e.agentId === undefined) {
     answered = false
     $.clock.after(0, () => void afterTurn($, !forking))
   }
 }
 
-/**
- * Called by gate.ts's `session.compact` hook once the engine compacted: until
- * the next turn sends it, the new prefix is in no cache, so the next ping goes
- * as a wake turn (src/fork.ts). A precompute or a skipped compaction changed nothing.
- */
+/** Run by gate.ts's `session.compact` hook once the engine compacted. */
 export function keepaliveCompacted($: $, e: EventOf['session.compact'], result: EventResult<'session.compact'> | undefined): void {
   if (e.agentId !== undefined || e.trigger === 'precompute' || result?.skip !== undefined) return
   $.clock.after(0, () => void cli($, 'compacted'))
 }
 
-/**
- * Called by gate.ts's `tool.call` hook as AskUserQuestion starts waiting for the
- * person: `wait-start` takes the stretch (the request that asked just renewed
- * the cache), and the timer runs as after a turn's end. Awaited, so the timer
- * is set before the question shows; a CLI that does not answer arms nothing.
- */
+/** Run by gate.ts's `tool.call` hook as AskUserQuestion starts waiting for the person. */
 export async function keepaliveWaitStart($: $): Promise<void> {
   answered = false
   const a = await cli($, 'wait-start')
   if (a?.action === 'none') schedule($, a.dueInSec)
 }
 
-/** The answer came (or the call failed): stop the timer; the turn goes on, and its Stop re-arms. */
+/** Run when the answer came or the call failed: the turn goes on, and its Stop re-arms. */
 export async function keepaliveWaitEnd($: $): Promise<void> {
   schedule($, undefined)
-  // A fork still in flight must not re-arm the timer inside the running turn.
   answered = true
   await cli($, 'wait-end')
 }
 
-/** As src/commands.ts has them (`isPingCommand`); the mod does not import the CLI's modules. */
 const PING_COMMAND = '/cache-keeper:ping'
 const PING_MARKER = '[cache-keeper:ping]'
 
-/**
- * Is this turn `/cache-keeper:ping`'s? A command's turn begins with its tag
- * (`<command-name>/cache-keeper:ping</command-name>`, seen on 2.1.321); the
- * typed line and the command file's body are matched too.
- */
 export function isPingTurn(text: string): boolean {
   const t = text.trim()
   if (t === PING_COMMAND || t.startsWith(`${PING_COMMAND} `)) return true
-  // Anchored at the start, so a message that merely quotes the marker or the tag is a message.
+  // INVARIANT: the same test as src/commands.ts isPingCommand (the mod cannot import it). A command's turn begins with
+  // its tag (seen on Claude Code 2.1.321); anchored at the start, so a message that merely quotes it is a message.
   return t.startsWith(PING_MARKER) || (t.startsWith('<command-') && t.includes(`<command-name>${PING_COMMAND}</command-name>`))
 }
 
-/**
- * Called by gate.ts's `turn.step` hook for `/cache-keeper:ping`'s turn: the
- * text to answer it with, no model request, or undefined to let the turn
- * reach the model (commands/ping.md), which reads the cache as a wake turn.
- * That is also the way out when the CLI does not answer or the fork fails.
- */
+/** The text that answers `/cache-keeper:ping`'s turn, or undefined to let it reach the model as a wake turn. */
 export async function manualPing($: $): Promise<string | undefined> {
-  // A ping already on its way (the timer's fork, say) is refused by the CLI: it holds the open ping.
   const a = await cli($, 'ping-now')
   if (a?.action === 'none') return a.text ?? 'cache-keeper: no ping sent.'
   if (a?.action !== 'fork') return undefined
@@ -247,21 +198,19 @@ export async function manualPing($: $): Promise<string | undefined> {
     forking = false
   }
   const s = await cli($, 'forked', { fork: forkResult(r) })
-  // The fork failed and the CLI turned the ping into a turn: commands/ping.md answers it.
   if (s?.action === 'turn') return undefined
   if (s?.action === 'none' && s.text !== undefined) return s.text
-  // The CLI did not record it: never a second request on top of a fork that went out.
+  // INVARIANT: never a second request on top of a fork that went out, even when the CLI did not record it.
   return r.isAnswered ? 'cache-keeper: pinged, but keeper could not record it.' : 'cache-keeper: no ping sent: the fork failed.'
 }
 
-/** Called by gate.ts's `session.compact` hook: `{ skip }` while a renewing turn goes first. */
+/** `{ skip }` while a renewing turn goes first. */
 export async function beforeCompact($: $, e: EventOf['session.compact']): Promise<{ skip: string } | undefined> {
   if (e.agentId !== undefined || (e.trigger !== 'manual' && e.trigger !== 'plugin')) return undefined
   const a = await cli($, 'compact-check', { trigger: e.trigger })
   if (a?.action !== 'renew') return undefined
   const instructions = e.instructions
   compactAfterTurn = { instructions, at: await $.clock.now() }
-  // A renewing turn that could not start: compact now, cold, rather than never.
   void $.prompt.submit({ text: a.text }).catch(() => {
     compactAfterTurn = undefined
     void compactLater($, instructions)
