@@ -30,10 +30,15 @@
  *
  * `"statusLine": false` in config.json turns it off, for setups whose own
  * statusLine command already shows keeper.
+ *
+ * With the band on (band.ts, `"band": true`, the default) the same line is
+ * drawn above the prompt with buttons instead, and this line carries errors only.
  * Every failure clears the line: a status must never break a session.
  */
 
 import type { EngineInterface as $ } from 'claude-code'
+// @ts-ignore TS5097
+import { bandOn, setBand } from './band.ts'
 
 const EVERY_MS = 30_000
 /** The Stop hook writes the record after the turn ends; read it after that. */
@@ -154,7 +159,7 @@ async function readJson($: $, path: string): Promise<Json | undefined> {
   }
 }
 
-async function refresh($: $): Promise<void> {
+export async function refresh($: $): Promise<void> {
   try {
     const sid = await $.session.id()
     const home = (await $.env.get('CACHE_KEEPER_HOME')) ?? `${await $.env.get('HOME')}/.claude-cache-keeper`
@@ -169,16 +174,30 @@ async function refresh($: $): Promise<void> {
       minCtxTokens: await $.env.get('CACHE_KEEPER_MIN_CTX_TOKENS'),
       disabled: await $.env.get('CACHE_KEEPER_DISABLED'),
     }
-    if (nodeBroken) return $.ui.status(shown(config ?? {}, env) ? NODE_ERROR : undefined)
+    // Errors stay on the status line even with the band on: it is the one place every surface shows.
+    if (nodeBroken) return clear($, shown(config ?? {}, env) ? NODE_ERROR : undefined)
     const failed = errorLine(session, home)
-    if (failed !== undefined && shown(config ?? {}, env)) return $.ui.status(failed)
+    if (failed !== undefined && shown(config ?? {}, env)) return clear($, failed)
     const now = await $.clock.now()
     const req = requested
     const line = lineOf(session, config ?? {}, env, now, tuning, req?.sid === sid ? req.at : undefined)
-    $.ui.status(line === undefined ? undefined : format(line, new Date(line.kind === 'cached' ? line.warmUntil : now).getTimezoneOffset()))
+    const offsetMin = new Date(line?.kind === 'cached' ? line.warmUntil : now).getTimezoneOffset()
+    if (line !== undefined && bandOn(config ?? {})) {
+      // The band draws the line with buttons; the status line would only repeat it.
+      $.ui.status(undefined)
+      setBand($, { line, offsetMin, muted: session?.doneAt !== undefined })
+      return
+    }
+    clear($, line === undefined ? undefined : format(line, offsetMin))
   } catch {
-    $.ui.status(undefined)
+    clear($, undefined)
   }
+}
+
+/** The status line set to `text`, and the band emptied: one of them speaks at a time. */
+function clear($: $, text: string | undefined): void {
+  $.ui.status(text)
+  setBand($, undefined)
 }
 
 /** Called by gate.ts's `session.start` hook: a plugin has one hooks module, and one hook per event. */

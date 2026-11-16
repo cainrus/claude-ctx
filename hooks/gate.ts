@@ -25,7 +25,9 @@ import type { EngineInterface, Register } from 'claude-code'
 // @ts-ignore TS5097
 import { beforeCompact, isPingTurn, keepaliveCompacted, keepaliveStarted, keepaliveTurnDone, keepaliveWaitEnd, keepaliveWaitStart, manualPing } from './keepalive.ts'
 // @ts-ignore TS5097
-import { statusRequested, statusStarted, statusTurnDone } from './status.ts'
+import { refresh, statusRequested, statusStarted, statusTurnDone } from './status.ts'
+// @ts-ignore TS5097
+import { renderBand } from './band.ts'
 
 /** The spawn behind menu choice 2 may take a while (handoff-run.ts allows it 45 s). */
 const GATE_TIMEOUT_MS = 60_000
@@ -67,6 +69,9 @@ export const register: Register = on => {
     statusTurnDone($)
     return done
   })
+
+  // The status line with buttons, above the prompt (band.ts).
+  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => renderBand($, e, next, () => refresh($)))
 
   // The text a turn began with: turn.step does not carry it.
   const began = new Map<string, string>()

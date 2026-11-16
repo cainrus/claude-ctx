@@ -1,0 +1,143 @@
+/**
+ * The clickable form of the status line: a row above the prompt, drawn where
+ * the mod runs. Without the mod there is no row and no status line; the
+ * commands (`/cache-keeper:status|ping|done`) are the whole interface then.
+ *
+ *   ◉ 14:05  ↻3  ✓  ?        warm till 14:05, 3 pings left, done, legend
+ *   ◉ 14:05 final  ✓  ?      no ping is coming: 14:05 is final
+ *   ◉ 14:05 final  ✓ done ?  muted by /cache-keeper:done (or ✓ pressed)
+ *   ○ cache expired  ?       the next turn rewrites the context
+ *   ○ ready  ?               nothing sent in this session yet
+ *
+ *   ↻N  press: ping now, as `/cache-keeper:ping` does, by a fork (no turn)
+ *   ✓   press: stop keeping this session, as `/cache-keeper:done` does
+ *   ?   press: pin the legend; hovering the row shows it too
+ *
+ * status.ts computes the line and hands it here (`setBand`); the row redraws on
+ * each hand-over. `"band": false` in config.json puts the line back on the
+ * status line as plain text. Every failure draws nothing: the band must never
+ * break a session.
+ */
+
+import type { EngineInterface as $ } from 'claude-code'
+// @ts-ignore TS5097
+import type { Line } from './status.ts'
+// @ts-ignore TS5097
+import { manualPing } from './keepalive.ts'
+
+export interface BandView {
+  line: Line
+  /** getTimezoneOffset() at the time shown. */
+  offsetMin: number
+  /** Muted by `/cache-keeper:done`: ✓ shows as done, not as a button. */
+  muted: boolean
+}
+
+export const LEGEND = '◉ warm till · ○ cold or not started · ↻N ping now (N left) · final: no ping is coming · ✓ stop keeping this session · ? this legend'
+
+/** Whether the band replaces the status line. */
+export function bandOn(config: Record<string, unknown>): boolean {
+  return config.band !== false
+}
+
+/** One piece of the row: plain text, or a button by its key. */
+export type Part = { text: string; dim?: boolean } | { key: 'ping' | 'done' | 'help'; label: string }
+
+const hhmm = (at: number, offsetMin: number): string => {
+  const local = new Date(at - offsetMin * 60_000)
+  return `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`
+}
+
+/** The row, pure so the tests can drive it. `working`: a turn runs, so no ping button. */
+export function partsOf(v: BandView, working: boolean): Part[] {
+  const help: Part = { key: 'help', label: '?' }
+  if (v.line.kind === 'ready') return [{ text: '○ ready' }, help]
+  if (v.line.kind === 'expired') return [{ text: '○ cache expired' }, help]
+  const parts: Part[] = [{ text: `◉ ${hhmm(v.line.warmUntil, v.offsetMin)}` }]
+  if (v.line.extends) parts.push(working ? { text: `↻${v.line.left}`, dim: true } : { key: 'ping', label: `↻${v.line.left}` })
+  else parts.push({ text: 'final', dim: true })
+  parts.push(v.muted ? { text: '✓ done', dim: true } : { key: 'done', label: '✓' })
+  parts.push(help)
+  return parts
+}
+
+// One copy per load: status.ts hands a new view at every refresh.
+let view: BandView | undefined
+let legendPinned = false
+let busy = false
+
+/** Called by status.ts at every refresh; undefined empties the band. */
+export function setBand($: $, next: BandView | undefined): void {
+  const same = JSON.stringify(next) === JSON.stringify(view)
+  view = next
+  if (same) return
+  try {
+    $.ui.invalidate('ui.render')
+  } catch {
+    // Nothing to redraw from here: the next render reads the new view anyway.
+  }
+}
+
+const CLI_TIMEOUT_MS = 20_000
+
+/** `/cache-keeper:done` as the prompt hook answers it: the same CLI, the same record. */
+async function markDone($: $): Promise<string> {
+  try {
+    const { exitCode, stdout } = await $.process.run(
+      ['node', '--disable-warning=ExperimentalWarning', `${$.plugin.root}/bin/cache-keeper.ts`, 'touch'],
+      { stdin: JSON.stringify({ session_id: await $.session.id(), prompt: '/cache-keeper:done' }), timeoutMs: CLI_TIMEOUT_MS },
+    )
+    const out = exitCode === 0 ? JSON.parse(stdout.trim().split('\n').pop() ?? '') : undefined
+    if (out?.decision === 'block' && typeof out.reason === 'string') return out.reason
+  } catch {
+    // Fall through: say it did not take.
+  }
+  return 'cache-keeper: could not mark this session done; /cache-keeper:done does the same.'
+}
+
+async function press($: $, key: 'ping' | 'done', refresh: () => Promise<void>): Promise<void> {
+  if (busy) return
+  busy = true
+  try {
+    // undefined: the ping needs a turn of its own (forks off, or the fork failed); the command sends one.
+    const text = key === 'ping' ? ((await manualPing($)) ?? 'cache-keeper: this ping needs a turn: run /cache-keeper:ping.') : await markDone($)
+    $.ui.toast(text)
+  } catch {
+    $.ui.toast('cache-keeper: that did not go through.')
+  } finally {
+    busy = false
+    await refresh().catch(() => {})
+  }
+}
+
+/** gate.ts's `ui.render` hook on `AbovePrompt`. */
+export async function renderBand<E extends { props: { hasSurvey: boolean; isWorking: boolean } }, R>(
+  $: $,
+  e: E,
+  next: (e: E) => R | Promise<R>,
+  refresh: () => Promise<void>,
+): Promise<R> {
+  const v = view
+  if (v === undefined || e.props.hasSurvey) return next(e)
+  try {
+    const { Box, Button, Text } = $.ui.resolve(e as never) as ReturnType<$['ui']['resolve']>
+    const row = partsOf(v, e.props.isWorking).flatMap((p, i) => {
+      const gap = i === 0 ? [] : [h(Text, null, ' ')]
+      if ('text' in p) return [...gap, h(Text, { dimColor: p.dim === true }, p.text)]
+      const key = p.key
+      const onPress = key === 'help'
+        ? () => {
+            legendPinned = !legendPinned
+            $.ui.invalidate('ui.render')
+          }
+        : () => void press($, key, refresh)
+      return [...gap, h(Button, { key, onPress }, p.label)]
+    })
+    const legend = legendPinned
+      ? h(Text, { dimColor: true }, LEGEND)
+      : h(Box, { display: 'none', hover: { display: 'flex' } }, h(Text, { dimColor: true }, LEGEND))
+    return h(Box, { key: 'cache-keeper', flexDirection: 'column' }, h(Box, null, ...row), legend) as R
+  } catch {
+    return next(e)
+  }
+}

@@ -215,6 +215,7 @@ Environment variables (set them in the `env` block of your Claude Code settings 
 | `handoff.enabled` | `CACHE_KEEPER_HANDOFF` | `false` | write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](#handoff)) |
 | `handoff.*` | | | see [Handoff](#handoff) |
 | `statusLine` | — | `true` | show the cache line under the prompt (see [Status line](#status-line)) |
+| `band` | — | `true` | draw that line above the prompt with buttons instead (see [Status line](#status-line)); `false` keeps it plain text |
 | `forkPings` | `CACHE_KEEPER_FORK` | `true` | ping with a fork instead of a wake turn where the plugin's mod loads (see [Fork pings](#fork-pings)) |
 | `cacheTtlSec` | — | `3600` | the cache TTL the status line, `/cache-keeper:status`, `/cache-keeper:ping` and the report assume; change it only if yours is not one hour |
 
@@ -241,6 +242,22 @@ Installed as a plugin, keeper pins one line under the prompt (Claude Code shows 
 It comes from keeper's own session record, refreshed a few seconds after each turn and every 30 s; Node is checked
 once when the session starts. It is a line of its own, not part of your `statusLine` command: Claude Code gives plugins no
 way into that slot. If your `statusLine` already shows keeper, set `"statusLine": false` in `config.json`.
+
+### The band: the same line, clickable
+
+Where the mod loads, the line moves above the prompt as a row of buttons, and the status line keeps errors only:
+
+```
+◉ 14:05 ↻3 ✓ ?
+```
+
+- `◉ 14:05`: warm till 14:05 (`○ ready`, `○ cache expired` as above); `final` after it when no ping is coming.
+- `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn); 3 pings are left. Dim while a turn runs.
+- `✓`: press to stop keeping this session, as `/cache-keeper:done` does; `✓ done` once it is.
+- `?`: press to pin the legend; hovering the row shows it too.
+
+Without the mod (an older Claude Code, mods off) there is no row and no line: the three commands are the interface.
+`"band": false` in `config.json` keeps the plain-text line instead.
 
 ## Fork pings
 
