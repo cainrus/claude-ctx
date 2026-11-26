@@ -6,7 +6,7 @@ import { DONE_COMMAND, DONE_REPLY, end, isDoneCommand, isWakePrompt, record, tou
 import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
 import { rateFor } from '../src/prices.ts'
-import { loadAwayBudget, loadSession, newSession, saveAwayBudget, saveSession } from '../src/state.ts'
+import { compactedSinceRequest, loadAwayBudget, loadSession, newSession, saveAwayBudget, saveSession } from '../src/state.ts'
 import { assistantLine, configFor, FIXTURES, makeCtx, MIN, SID, tempHome, userLine, writeLines, writeTranscript } from './helpers.ts'
 
 const T0 = Date.parse('2026-01-01T10:00:00.000Z')
@@ -432,13 +432,14 @@ test('record: no split ever seen leaves the bucket unset, so the line falls back
   assert.equal(loadSession(home, SID)!.cacheTtlSec, undefined)
 })
 
-test('record: lastRequestAt is the start of the request, lastTurnEndAt stays the answer time', () => {
+test('record: cacheAnchorAt is the start of the request; lastRequestAt and lastTurnEndAt stay the answer time', () => {
   const home = tempHome()
   const config = configFor(home)
   const transcript = writeLines(home, [userLine(T0 - 25_000, 'do it'), assistantLine({ at: T0, ...BIG })])
   record({ session_id: SID, transcript_path: transcript }, makeCtx(config, T0 + 500))
   const s = loadSession(home, SID)!
-  assert.equal(s.lastRequestAt, T0 - 25_000)
+  assert.equal(s.cacheAnchorAt, T0 - 25_000)
+  assert.equal(s.lastRequestAt, T0, 'Claude Code clock, as before')
   assert.equal(s.lastTurnEndAt, T0)
 })
 
@@ -451,28 +452,120 @@ test('record: a tool loop anchors at its last request, the tool result before th
     assistantLine({ at: T0, ...BIG }),
   ])
   record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
-  assert.equal(loadSession(home, SID)!.lastRequestAt, T0 - 20_000)
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0 - 20_000)
 })
 
-test('record: no request start in the transcript, or one after the answer, keeps lastRequestAt at the turn end', () => {
+test('record: no request start in the transcript keeps the anchor at the turn end', () => {
   const { home } = setup()
-  assert.equal(loadSession(home, SID)!.lastRequestAt, T0)
-  const late = writeLines(home, [assistantLine({ at: T0, ...BIG }), userLine(T0 + 5_000, 'next')], 'late.jsonl')
-  record({ session_id: SID, transcript_path: late }, makeCtx(configFor(home), T0 + 500))
-  assert.equal(loadSession(home, SID)!.lastRequestAt, T0)
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0)
 })
 
-test("record: a new session's first turn is priced once, from the first request's prompt, in a 1-hour cache", () => {
+test('record: a prompt queued behind the answer is already in the transcript: the anchor is the latest start before the answer', () => {
+  const home = tempHome()
+  const transcript = writeLines(home, [userLine(T0 - 25_000, 'do it'), assistantLine({ at: T0, ...BIG }), userLine(T0 + 5_000, 'next')])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0 - 25_000)
+})
+
+test('record: a start from before this turn began is not trusted', () => {
+  const home = tempHome()
+  saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 5_000 })
+  const transcript = writeLines(home, [userLine(T0 - 30 * MIN, 'an earlier prompt'), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0)
+})
+
+test('record: a transcript that never catches up leaves the anchor at now, not at an earlier turn\'s start', () => {
+  const home = tempHome()
+  saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 5_000 })
+  const transcript = writeLines(home, [userLine(T0 - 30 * MIN, 'an earlier prompt'), assistantLine({ at: T0 - 29 * MIN, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  const s = loadSession(home, SID)!
+  assert.equal(s.lastTurnEndAt, T0 + 500)
+  assert.equal(s.cacheAnchorAt, T0 + 500)
+})
+
+// A tool-loop turn compacted before its final answer: the compaction lands after the tool result, before the answer.
+test('record: a compaction in the middle of a turn does not count as "since the request": lastRequestAt is as before the status change', () => {
+  const home = tempHome()
+  saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 60_000, compactedAt: T0 - 10_000 })
+  const transcript = writeLines(home, [
+    userLine(T0 - 60_000, 'do it'),
+    assistantLine({ at: T0 - 50_000, ...BIG }),
+    userLine(T0 - 20_000, [{ type: 'tool_result', content: 'ok' }]),
+    userLine(T0 - 9_000, 'This session is being continued', { isCompactSummary: true }),
+    assistantLine({ at: T0, ...BIG }),
+  ])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  const s = loadSession(home, SID)!
+  assert.equal(s.lastRequestAt, T0, 'the answer time, as main does')
+  assert.equal(compactedSinceRequest(s), false, 'the post-compaction request wrote a new cache')
+  assert.equal(s.cacheAnchorAt, T0 - 20_000, 'only the status line anchors at the start')
+})
+
+test('record: the bucket is the last one any request of this turn wrote, even when the final request is read-only', () => {
+  const home = tempHome()
+  saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 60_000, cacheTtlSec: 3600 })
+  const transcript = writeLines(home, [
+    userLine(T0 - 60_000, 'do it'),
+    assistantLine({ at: T0 - 50_000, read: 80_000, write: 800, split: { m5: 800 } }),
+    userLine(T0 - 20_000, [{ type: 'tool_result', content: 'ok' }]),
+    assistantLine({ at: T0, read: 90_000, write: 0 }),
+  ])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.cacheTtlSec, 300)
+})
+
+test('record: a turn that wrote no bucket keeps the previous one, not an earlier turn\'s', () => {
+  const home = tempHome()
+  saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 5_000, cacheTtlSec: 3600 })
+  const transcript = writeLines(home, [
+    userLine(T0 - 30 * MIN, 'old'),
+    assistantLine({ at: T0 - 29 * MIN, read: 80_000, write: 800, split: { m5: 800 } }),
+    userLine(T0 - 5_000, 'new'),
+    assistantLine({ at: T0, read: 90_000, write: 0 }),
+  ])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.cacheTtlSec, 3600)
+})
+
+test('record: a wake-hit entry says when the ping was sent', () => {
+  const home = tempHome()
+  const pingAt = T0 + 50 * MIN
+  saveSession(home, { ...newSession(SID), pendingPing: true, lastPingAt: pingAt })
+  const transcript = writeLines(home, [userLine(pingAt + 500, 'wake'), assistantLine({ at: pingAt + 4_000, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), pingAt + 4_500))
+  const hit = readLedger(home).find((e) => e.event === 'wake-hit')!
+  assert.equal(hit.sentAt, new Date(pingAt).toISOString())
+  assert.equal(hit.t, new Date(pingAt + 4_500).toISOString())
+})
+
+test("record: a new session's first turn is priced from the first request's prompt, in a 1-hour cache, at the current model", () => {
   const home = tempHome()
   const config = configFor(home)
-  const transcript = writeLines(home, [userLine(T0 - 9_000, 'hi'), assistantLine({ at: T0 - 5_000, read: 0, write: 30_000, input: 0 }), assistantLine({ at: T0, ...BIG })])
-  record({ session_id: SID, transcript_path: transcript }, makeCtx(config, T0 + 500))
+  const first = writeLines(home, [userLine(T0 - 9_000, 'hi'), assistantLine({ at: T0 - 5_000, read: 0, write: 30_000, input: 0 }), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: first }, makeCtx(config, T0 + 500))
   const s = loadSession(home, SID)!
+  assert.equal(s.coldStartTokens, 30_000)
   const r = rateFor(s.model, config.prices, 30_000)
   assert.equal(s.coldStartUsd, (30_000 * r.cacheWrite) / 1e6)
   assert.ok(s.coldStartUsd! < s.coldTurnUsd!)
-  const grown = writeLines(home, [assistantLine({ at: T0 + MIN, read: 400_000, write: 1_000 })], 'grown.jsonl')
-  const before = s.coldStartUsd
+  // The session moves to another model: the tokens stay, the price follows the model.
+  const grown = writeLines(home, [assistantLine({ at: T0 + MIN, read: 400_000, write: 1_000, model: 'claude-haiku-4-5' })], 'grown.jsonl')
   record({ session_id: SID, transcript_path: grown }, makeCtx(config, T0 + MIN + 500))
-  assert.equal(loadSession(home, SID)!.coldStartUsd, before, 'set once')
+  const after = loadSession(home, SID)!
+  assert.equal(after.coldStartTokens, 30_000, 'read once')
+  const h = rateFor('claude-haiku-4-5', config.prices, 30_000)
+  assert.equal(after.coldStartUsd, (30_000 * h.cacheWrite) / 1e6)
+  assert.notEqual(after.coldStartUsd, s.coldStartUsd)
+})
+
+test('record: a first request out of the scan cap is remembered as not found, not searched again each Stop', () => {
+  const home = tempHome()
+  const pad = JSON.stringify({ type: 'progress', pad: 'x'.repeat(1024 * 1024) })
+  const transcript = writeLines(home, [...Array.from({ length: 17 }, () => pad), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  const s = loadSession(home, SID)!
+  assert.equal(s.coldStartTokens, 0)
+  assert.equal(s.coldStartUsd, undefined)
 })

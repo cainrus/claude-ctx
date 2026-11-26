@@ -124,6 +124,7 @@ export function waitStart(input: ForkInput, ctx: Ctx, env: NodeJS.ProcessEnv = p
   // (#3683: 8 such rewrites in a week, longest wait 45 h). The asking request just renewed the cache: the stretch starts now.
   state.lastTurnEndAt = ctx.now
   state.lastRequestAt = ctx.now
+  state.cacheAnchorAt = ctx.now
   state.forkPingsHeld = 0
   state.waitingSince = ctx.now
   saveSession(home, state)
@@ -179,6 +180,7 @@ export function forked(input: ForkInput, ctx: Ctx): number {
   if (!state || !state.pendingPing || state.pingTransport !== 'fork') return answer(ctx, { action: 'none' })
   const f = input.fork
   const base = { t: iso(ctx.now), sessionId: sid, ctxTokens: state.ctxTokens, model: state.model }
+  const sentAt = state.lastPingAt !== undefined ? { sentAt: iso(state.lastPingAt) } : {}
 
   if (!f?.isAnswered || !f.usage) {
     const failure = f?.reason ?? 'no-result'
@@ -233,7 +235,11 @@ export function forked(input: ForkInput, ctx: Ctx): number {
   const button = state.pingButton === true
   const personBack = (state.lastHumanAt ?? 0) > (state.lastPingAt ?? 0)
   closePing(state)
-  if (!personBack) state.lastTurnEndAt = ctx.now
+  if (!personBack) {
+    state.lastTurnEndAt = ctx.now
+    // The server's clock restarted when the fork was sent, not when it came back.
+    state.cacheAnchorAt = state.lastPingAt ?? ctx.now
+  }
   state.forkPingsHeld = (state.forkPingsHeld ?? 0) + 1
   saveForkClaim(home, sid, ctx.now)
 
@@ -249,7 +255,7 @@ export function forked(input: ForkInput, ctx: Ctx): number {
   const denom = usage.cacheRead + usage.cacheWrite + usage.inputTokens
   const hit = denom > 0 && usage.cacheRead / denom >= hitRatio
   state.lastPingHit = hit
-  const entry = { ...base, event: hit ? 'wake-hit' : 'wake-miss', transport: 'fork', ...usage } as const
+  const entry = { ...base, event: hit ? 'wake-hit' : 'wake-miss', transport: 'fork', ...sentAt, ...usage } as const
   addPingCost(state, entry, ctx.config.prices)
   saveSession(home, state)
   appendLedger(home, entry)

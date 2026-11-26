@@ -38,7 +38,7 @@ Every decision is one line in `$CACHE_KEEPER_HOME/ledger.jsonl`:
 | `skip` | no ping; `reason` names the policy row that refused it (see [How it decides](policy.md)) |
 | `resume` | a real prompt ended an idle stretch that had pings; `pings` spent, `lastPingHit`; `detail: "question"` for an answer to a waiting question |
 | `resume-paid` | what the first request of that resumed turn really paid (`cacheRead`, `cacheWrite`) |
-| `wake-hit` | a ping read the cache; its usage is the cost line; `detail: "handoff"` for a brief turn |
+| `wake-hit` | a ping read the cache; its usage is the cost line; `sentAt` is when it went out; `detail: "handoff"` for a brief turn |
 | `wake-miss` | a ping found the cache gone and wrote it again; mutes the session |
 | `handoff-request` | instead of letting the cache go, the brief turn was sent |
 | `handoff-ready` | the brief is on disk |

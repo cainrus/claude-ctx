@@ -24,7 +24,9 @@ export interface SessionState {
   /** USD the next turn's prompt costs from a warm cache, and written into a cold one; set at each turn end. */
   warmTurnUsd?: number
   coldTurnUsd?: number
-  /** USD the first turn of a NEW session would cost here (the first request's prompt, written into a 1-hour cache); set once. */
+  /** Prompt tokens of the session's first main request (0 = none found); read once, so a transcript is not rescanned every Stop. */
+  coldStartTokens?: number
+  /** USD the first turn of a NEW session would cost here: `coldStartTokens` written into a 1-hour cache, at the current model's price; set at each turn end. */
   coldStartUsd?: number
   /** The cache bucket of the last turn that wrote one, seconds (300 or 3600); a read-only turn keeps the previous one. */
   cacheTtlSec?: number
@@ -53,8 +55,10 @@ export interface SessionState {
   errorNoticeAt?: number
   /** Epoch ms since the main thread waits at AskUserQuestion; the turn is open. */
   waitingSince?: number
-  /** Epoch ms of the last main-thread request Claude Code itself saw (a real turn or a wake turn). */
+  /** Epoch ms of the last main-thread request Claude Code itself saw (a real turn or a wake turn). Policy reads it as Claude Code's own clock. */
   lastRequestAt?: number
+  /** Epoch ms the request that last read or wrote the server cache started (a fork ping: when it was sent); only the status line reads it. */
+  cacheAnchorAt?: number
   /** Fork pings sent since `lastRequestAt`. */
   forkPingsHeld?: number
   /** Epoch ms of the last compaction, reported by the mod. */
@@ -156,7 +160,8 @@ export function compactedSinceRequest(state: SessionState): boolean {
 }
 
 /** When the cache goes cold if nothing else is sent; undefined while nothing was sent. */
-// WARNING: hooks/status.ts keeps its own copy (the mod does not import src/); change both together.
+// WARNING: this counts from `lastTurnEndAt` with the config TTL, as the ping timer does. The status line (hooks/status.ts) anchors at `cacheAnchorAt`
+// (the request's start) with the bucket the turn wrote, because that is when the server's clock runs; the two ends can differ.
 export function warmUntilOf(state: SessionState | undefined, cacheTtlSec: number): number | undefined {
   const last = state?.lastTurnEndAt
   return last === undefined || last === 0 ? undefined : last + cacheTtlSec * 1000

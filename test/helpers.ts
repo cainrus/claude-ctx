@@ -108,7 +108,7 @@ export const TTL_OF_USAGE_CASES: Array<{ name: string; usage: unknown; ttlSec: 3
 
 const AT = Date.UTC(2026, 0, 1, 10, 0, 0)
 
-/** The rule of ~/dotfiles cache-anchor.jq, one row per case: does this transcript line start a model request? */
+/** One row per case: does this transcript line start a model request? A tool result, a prompt or a skill expansion does; a line the client writes itself, a summary or an interrupt note does not. */
 export const REQUEST_START_CASES: Array<{ name: string; line: string; starts: boolean }> = [
   { name: 'a typed prompt', line: userLine(AT, 'fix the bug'), starts: true },
   { name: 'a prompt in a text block', line: userLine(AT, [{ type: 'text', text: 'fix the bug' }]), starts: true },

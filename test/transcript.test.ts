@@ -126,7 +126,7 @@ test('usageFromLine: a read-only turn or a transcript with no split has no bucke
   assert.equal('ttlSec' in usageOf({ cache_read_input_tokens: 50, cache_creation: 'x' })!, false)
 })
 
-test('requestStartFromLine: which lines start a request (the rule of cache-anchor.jq)', () => {
+test('requestStartFromLine: which lines start a request', () => {
   for (const c of REQUEST_START_CASES) assert.equal(requestStartFromLine(c.line), c.starts ? REQUEST_START_AT : undefined, c.name)
 })
 
@@ -168,4 +168,34 @@ test('firstMainUsage: the first main-thread request from the front, whatever the
   // The last line has no newline at the end of the file.
   writeFileSync(join(dir, 'torn.jsonl'), assistantLine({ at: 9, read: 5 }))
   assert.equal(firstMainUsage(join(dir, 'torn.jsonl'), 16)?.cacheRead, 5)
+})
+
+test('lastMainTurn: a prompt queued behind the answer is not its request; the latest start before the answer is', () => {
+  const p = writeLines(tempHome(), [userLine(1_000, 'first'), userLine(10_000, [{ type: 'tool_result', content: 'ok' }]), assistantLine({ at: 30_000, read: 2 }), userLine(35_000, 'queued')])
+  assert.equal(lastMainTurn(p).requestStart, 10_000)
+  assert.equal(lastMainTurn(p).usage?.timestamp, 30_000)
+})
+
+test('lastMainTurn: the bucket is the last one a request of this turn wrote, a read-only final request included', () => {
+  const p = writeLines(tempHome(), [
+    userLine(1_000, 'old'),
+    assistantLine({ at: 2_000, write: 500, split: { h1: 500 } }),
+    userLine(10_000, 'new'),
+    assistantLine({ at: 11_000, write: 800, split: { m5: 800 } }),
+    userLine(20_000, [{ type: 'tool_result', content: 'ok' }]),
+    assistantLine({ at: 30_000, read: 2 }),
+  ])
+  assert.equal(lastMainTurn(p, 1024, 10_000).ttlSec, 300)
+  assert.equal(lastMainTurn(p, 1024, 25_000).ttlSec, undefined, 'a turn that wrote none: the earlier bucket is not its own')
+  assert.equal(lastMainTurn(p, 1024, 0).ttlSec, 300)
+})
+
+test('lastMainTurn and firstMainUsage stop at the scan cap instead of reading a huge file every Stop', () => {
+  const dir = tempHome()
+  const pad = JSON.stringify({ type: 'progress', pad: 'x'.repeat(1024 * 1024) })
+  const p = writeLines(dir, [assistantLine({ at: 1_000, read: 1 }), ...Array.from({ length: 18 }, () => pad)])
+  assert.equal(lastMainTurn(p).usage, undefined, 'the only request lies 18 MiB back')
+  const late = writeLines(dir, [...Array.from({ length: 3 }, () => pad), assistantLine({ at: 1_000, read: 1 })], 'late.jsonl')
+  assert.equal(firstMainUsage(late, 64 * 1024, 1024 * 1024), undefined)
+  assert.equal(firstMainUsage(late)?.cacheRead, 1, 'inside the default cap it is found')
 })

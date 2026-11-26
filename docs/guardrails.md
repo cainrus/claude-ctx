@@ -6,26 +6,26 @@ contributors and for agents editing the code: none of these may be removed or ch
 <!-- gen:guardrails -->
 ## Invariants
 
-- [`src/commands.ts:115`](../src/commands.ts#L115) hooks/keepalive.ts `isPingTurn` is the mod's copy of this test; keep the two in step.
-- [`src/commands.ts:133`](../src/commands.ts#L133) a turn the gate (or the mod) answered never reached the model: its Stop must not read as a touched cache.
-- [`src/commands.ts:166`](../src/commands.ts#L166) only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook may have blocked the turn: a spurious miss would mute the session for good). A fork is scored by `forked`.
-- [`src/commands.ts:257`](../src/commands.ts#L257) a turn held open by a question (fork.ts waitStart) takes only forks: a wake turn or a handoff would land inside it.
-- [`src/fork.ts:165`](../src/fork.ts#L165) the mod's own limit on one fork, hooks/keepalive.ts FORK_TIMEOUT_MS; keep the two in step.
-- [`src/fork.ts:187`](../src/fork.ts#L187) no fallback turn once the person is back or a question holds the turn open: it would land inside their turn. Nothing goes out past maxAgeSec (measured: a fallback delayed by an outage landed 13 min late and wrote 436k).
-- [`src/fork.ts:272`](../src/fork.ts#L272) a band press has no command turn, so it marks no Stop as the gate's and leaves nothing for a turn to close.
+- [`src/commands.ts:116`](../src/commands.ts#L116) hooks/keepalive.ts `isPingTurn` is the mod's copy of this test; keep the two in step.
+- [`src/commands.ts:134`](../src/commands.ts#L134) a turn the gate (or the mod) answered never reached the model: its Stop must not read as a touched cache.
+- [`src/commands.ts:169`](../src/commands.ts#L169) only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook may have blocked the turn: a spurious miss would mute the session for good). A fork is scored by `forked`.
+- [`src/commands.ts:261`](../src/commands.ts#L261) a turn held open by a question (fork.ts waitStart) takes only forks: a wake turn or a handoff would land inside it.
+- [`src/fork.ts:166`](../src/fork.ts#L166) the mod's own limit on one fork, hooks/keepalive.ts FORK_TIMEOUT_MS; keep the two in step.
+- [`src/fork.ts:189`](../src/fork.ts#L189) no fallback turn once the person is back or a question holds the turn open: it would land inside their turn. Nothing goes out past maxAgeSec (measured: a fallback delayed by an outage landed 13 min late and wrote 436k).
+- [`src/fork.ts:278`](../src/fork.ts#L278) a band press has no command turn, so it marks no Stop as the gate's and leaves nothing for a turn to close.
 - [`src/handoff-run.ts:7`](../src/handoff-run.ts#L7) below the 60 s of TOUCH_TIMEOUT_SEC (hooks.ts) and GATE_TIMEOUT_MS (hooks/gate.ts), with room for the rest of the hook.
 - [`src/handoff-run.ts:41`](../src/handoff-run.ts#L41) session titles as `ps -o comm=` prints them (macOS, Claude Code 2.1.303-2.1.304). The daemon `…/.local/bin/claude` and `claude bg-pty-host` must never match, nor may the walk pass an unknown `claude` title: closing the daemon ends every background session.
 - [`src/handoff.ts:339`](../src/handoff.ts#L339) a background session has nobody to answer the menu: a held peer message or task notification would freeze it while its sender reads "delivered". It pays the cold turn here; a handoff would leave the sender writing to a closed session.
 - [`src/handoff.ts:356`](../src/handoff.ts#L356) once the menu is shown its answer decides: `auto` would take the reply (`1`, `2`) as the message.
 - [`src/hooks.ts:5`](../src/hooks.ts#L5) every hook enters through bin/cache-keeper.sh: without a usable node it exits 0 in silence (`check` says why).
-- [`src/ledger.ts:67`](../src/ledger.ts#L67) one small line per O_APPEND write, so concurrent hooks interleave whole lines.
+- [`src/ledger.ts:69`](../src/ledger.ts#L69) one small line per O_APPEND write, so concurrent hooks interleave whole lines.
 - [`src/policy.ts:69`](../src/policy.ts#L69) null (an unknown probe) is neither at the keyboard nor gone: read as present, a broken probe would lift the away budget, the only machine-wide cap.
 - [`src/policy.ts:75`](../src/policy.ts#L75) branch order is the policy and must match SKIP_REASONS: it decides which reason the ledger blames.
 - [`src/presence.ts:77`](../src/presence.ts#L77) trusted only with a graphical session: without a desktop to set it, IdleHint can stay "no" forever, read as "at the keyboard", and lift the away budget.
-- [`src/state.ts:85`](../src/state.ts#L85) an id that is not a plain UUID is flattened so it cannot escape the sessions directory.
-- [`src/transcript.ts:28`](../src/transcript.ts#L28) hooks/status.ts `ttlOfUsage` is the mod's copy of this rule (it also reads the flat form of a `turn.step` usage); keep the two in step (test/status.test.ts runs one table on both).
-- [`src/transcript.ts:45`](../src/transcript.ts#L45) sidechain (subagent) and synthetic entries are skipped: their usage is not the main thread's cache.
-- [`src/transcript.ts:81`](../src/transcript.ts#L81) hooks/status.ts `requestStartOf` is the mod's copy of this rule; keep the two in step (test/status.test.ts runs one table on both).
+- [`src/state.ts:89`](../src/state.ts#L89) an id that is not a plain UUID is flattened so it cannot escape the sessions directory.
+- [`src/transcript.ts:33`](../src/transcript.ts#L33) hooks/status.ts `ttlOfUsage` is the mod's copy of this rule (it also reads the flat form of a `turn.step` usage); keep the two in step (test/status.test.ts runs one table on both).
+- [`src/transcript.ts:50`](../src/transcript.ts#L50) sidechain (subagent) and synthetic entries are skipped: their usage is not the main thread's cache.
+- [`src/transcript.ts:86`](../src/transcript.ts#L86) hooks/status.ts `requestStartOf` is the mod's copy of this rule; keep the two in step (test/status.test.ts runs one table on both).
 - [`hooks/band.ts:145`](../hooks/band.ts#L145) a failure draws what the engine would: the band must never break a session.
 - [`hooks/gate.ts:36`](../hooks/gate.ts#L36) fail open: a timeout, a spawn failure or output that is not JSON lets the input through.
 - [`hooks/keepalive.ts:34`](../hooks/keepalive.ts#L34) once a question is answered nothing arms until its turn's turn.complete: a fork's result would re-arm inside the turn.
@@ -34,10 +34,10 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`hooks/keepalive.ts:207`](../hooks/keepalive.ts#L207) not while an answered question's turn runs: nothing arms until its turn.complete.
 - [`hooks/keepalive.ts:213`](../hooks/keepalive.ts#L213) never a second request on top of a fork that went out, even when the CLI did not record it.
 - [`hooks/status.ts:23`](../hooks/status.ts#L23) a missing TTL reads as one hour: a wrong guess that way stays silent, the other way tells a person to pay for a re-read they did not need.
-- [`hooks/status.ts:103`](../hooks/status.ts#L103) mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
-- [`hooks/status.ts:208`](../hooks/status.ts#L208) src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
-- [`hooks/status.ts:227`](../hooks/status.ts#L227) src/transcript.ts `requestStartFromLine` is the source of this rule (the mod cannot import src/); keep the two in step.
-- [`hooks/status.ts:381`](../hooks/status.ts#L381) every failure clears the line: a status must never break a session.
+- [`hooks/status.ts:101`](../hooks/status.ts#L101) mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
+- [`hooks/status.ts:207`](../hooks/status.ts#L207) src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
+- [`hooks/status.ts:226`](../hooks/status.ts#L226) src/transcript.ts `requestStartFromLine` is the source of this rule (the mod cannot import src/); keep the two in step.
+- [`hooks/status.ts:417`](../hooks/status.ts#L417) every failure clears the line: a status must never break a session.
 - [`bin/cache-keeper.sh:45`](../bin/cache-keeper.sh#L45) reads "off" as src/config.ts does (env first, trimmed, any case, and it turns keeper back on over the file; else a top-level "enabled" of false/"false"/"no"/"off"/"0"); nested objects are cut out first (handoff's own "enabled").
 - [`bin/cache-keeper.ts:98`](../bin/cache-keeper.ts#L98) a hook must never break the session it runs in: any failure is exit 0 and leaves a trace (errors.ts).
 
@@ -45,11 +45,11 @@ contributors and for agents editing the code: none of these may be removed or ch
 
 - [`src/commands.ts:71`](../src/commands.ts#L71) the Stop hook can run before Claude Code flushed the turn's assistant entry (seen live), and a read then returns the PREVIOUS turn's usage. Poll for an entry no older than the turn's start; undefined = record it unscored.
 - [`src/fork.ts:123`](../src/fork.ts#L123) the open turn gets no Stop, so no sleeper; an answer an hour later rewrote the whole context (#3683: 8 such rewrites in a week, longest wait 45 h). The asking request just renewed the cache: the stretch starts now.
-- [`src/fork.ts:334`](../src/fork.ts#L334) anthropics/claude-code#105017: a fork renews the server's cache but not Claude Code's clock, so a compaction that sees no main-thread request within the TTL drops its cache markers and sends the whole context uncached.
+- [`src/fork.ts:340`](../src/fork.ts#L340) anthropics/claude-code#105017: a fork renews the server's cache but not Claude Code's clock, so a compaction that sees no main-thread request within the TTL drops its cache markers and sends the whole context uncached.
 - [`src/handoff-run.ts:16`](../src/handoff-run.ts#L16) with CLAUDECODE / CLAUDE_CODE_* set a nested `claude` writes no transcript and `--resume` finds nothing.
 - [`src/hooks.ts:20`](../src/hooks.ts#L20) under `claude -p` (sdk-cli) async hooks are not backgrounded, so the sleep would hold a one-shot run open.
-- [`src/state.ts:153`](../src/state.ts#L153) measured, a fork after /compact sent the compacted 42k uncached and wrote none of it; a wake turn would write it all, which the person's own next turn pays anyway.
-- [`src/transcript.ts:55`](../src/transcript.ts#L55) an error turn under another name has all-zero usage; reading it would zero the context.
+- [`src/state.ts:157`](../src/state.ts#L157) measured, a fork after /compact sent the compacted 42k uncached and wrote none of it; a wake turn would write it all, which the person's own next turn pays anyway.
+- [`src/transcript.ts:60`](../src/transcript.ts#L60) an error turn under another name has all-zero usage; reading it would zero the context.
 - [`hooks/gate.ts:12`](../hooks/gate.ts#L12) Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
 - [`hooks/gate.ts:67`](../hooks/gate.ts#L67) UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
 - [`hooks/keepalive.ts:18`](../hooks/keepalive.ts#L18) `$.model.fork` has no timeout of its own (anthropics/claude-code#101446).
@@ -58,21 +58,22 @@ contributors and for agents editing the code: none of these may be removed or ch
 
 ## Warnings
 
-- [`src/commands.ts:147`](../src/commands.ts#L147) the TTL restarted at the last assistant entry's timestamp, not this hook's clock. With delay == minAgeSec, "now" could land after the sleeper this Stop started and make it look stale. An entry older than the last prompt = not caught up: now.
+- [`src/commands.ts:148`](../src/commands.ts#L148) the TTL restarted at the last assistant entry's timestamp, not this hook's clock. With delay == minAgeSec, "now" could land after the sleeper this Stop started and make it look stale. An entry older than the last prompt = not caught up: now.
+- [`src/commands.ts:152`](../src/commands.ts#L152) lastRequestAt stays Claude Code's own clock (compactedSinceRequest, compactCheck's #105017 test read it): never the request start.
 - [`src/fork.ts:73`](../src/fork.ts#L73) a fork in flight did not survive the reload: nothing will score it, nor will the turn that fork answered end in a Stop the gate mark could wait for.
 - [`src/fork.ts:112`](../src/fork.ts#L112) prints nothing: a SessionStart hook's stdout reaches the model.
-- [`src/fork.ts:295`](../src/fork.ts#L295) with a fork the mod answers the command's turn, even if the CLI fails after it: that Stop is the mod's. Marked as of the fork's latest end, so a slow one does not push the Stop out of the window.
+- [`src/fork.ts:301`](../src/fork.ts#L301) with a fork the mod answers the command's turn, even if the CLI fails after it: that Stop is the mod's. Marked as of the fork's latest end, so a slow one does not push the Stop out of the window.
 - [`src/handoff-run.ts:74`](../src/handoff-run.ts#L74) detached and delayed by CLOSE_DELAY_SEC: killing the session kills this hook, which must answer first.
 - [`src/handoff.ts:186`](../src/handoff.ts#L186) matches Claude Code's own wrapping of a peer message or task notification (`<cross-session-message …>`, `<task-notification>`, maybe after a one-line preamble); if that format changes, they read as typed prompts.
 - [`src/presence.ts:102`](../src/presence.ts#L102) order matters. The precise probes need the desktop's session bus or X display, which a hook inherits from an interactive session but not from a daemon-spawned one; logind needs neither, so it is the last resort.
 - [`src/presence.ts:147`](../src/presence.ts#L147) Claude Code starts background sessions with CLAUDE_JOB_DIR and stamps their transcript lines "sessionKind":"bg"; hooks inherit the env var, the transcript is the fallback.
 - [`src/prices.ts:79`](../src/prices.ts#L79) family keys ("opus", the pre-0.6.6 form) apply first and rewrite every row they name, so a model-prefix override still wins over its family.
-- [`src/state.ts:113`](../src/state.ts#L113) a file apart from the session's: the mod claims at turn end, just when `record` rewrites the session file, and one write would drop the other's.
-- [`src/state.ts:159`](../src/state.ts#L159) hooks/status.ts keeps its own copy (the mod does not import src/); change both together.
-- [`src/transcript.ts:166`](../src/transcript.ts#L166) decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
-- [`src/transcript.ts:196`](../src/transcript.ts#L196) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
+- [`src/state.ts:117`](../src/state.ts#L117) a file apart from the session's: the mod claims at turn end, just when `record` rewrites the session file, and one write would drop the other's.
+- [`src/state.ts:163`](../src/state.ts#L163) this counts from `lastTurnEndAt` with the config TTL, as the ping timer does. The status line (hooks/status.ts) anchors at `cacheAnchorAt` (the request's start) with the bucket the turn wrote, because that is when the server's clock runs; the two ends can differ.
+- [`src/transcript.ts:193`](../src/transcript.ts#L193) decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
+- [`src/transcript.ts:223`](../src/transcript.ts#L223) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
 - [`hooks/band.ts:21`](../hooks/band.ts#L21) status.ts imports this module too. Use its functions at call time only: a const of it read while this module loads is not initialised yet.
 - [`hooks/gate.ts:42`](../hooks/gate.ts#L42) a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts) and the status line (status.ts) are called from these hooks.
 - [`hooks/keepalive.ts:58`](../hooks/keepalive.ts#L58) not awaited: it resolves only once the turn starts, which is after the calling hook returns.
-- [`hooks/status.ts:87`](../hooks/status.ts#L87) a fork ping renews the cache but never lastRequestAt (src/fork.ts leaves it: compact-check reads it as Claude Code's own clock), so while forks hold the cache (forkPingsHeld, reset by each Stop) lastTurnEndAt, which a fork sets, is the later anchor.
+- [`hooks/status.ts:87`](../hooks/status.ts#L87) not lastRequestAt: policy reads that as Claude Code's own clock (src/state.ts). cacheAnchorAt is the status line's own, written by Stop and by a fork ping that renewed the cache.
 <!-- /gen:guardrails -->

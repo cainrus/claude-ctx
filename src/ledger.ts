@@ -13,7 +13,7 @@ export const LEDGER_EVENTS = Object.freeze({
   skip: 'no ping; `reason` names the policy row that refused it (see [How it decides](policy.md))',
   resume: 'a real prompt ended an idle stretch that had pings; `pings` spent, `lastPingHit`; `detail: "question"` for an answer to a waiting question',
   'resume-paid': 'what the first request of that resumed turn really paid (`cacheRead`, `cacheWrite`)',
-  'wake-hit': 'a ping read the cache; its usage is the cost line; `detail: "handoff"` for a brief turn',
+  'wake-hit': 'a ping read the cache; its usage is the cost line; `sentAt` is when it went out; `detail: "handoff"` for a brief turn',
   'wake-miss': 'a ping found the cache gone and wrote it again; mutes the session',
   'handoff-request': 'instead of letting the cache go, the brief turn was sent',
   'handoff-ready': 'the brief is on disk',
@@ -51,6 +51,8 @@ export interface LedgerEntry {
   awaySeconds?: number | null
   /** ping / wake-hit / wake-miss: `fork` when the mod sent it as `$.model.fork`; absent = a wake turn. */
   transport?: 'fork'
+  /** wake-hit / wake-miss: ISO time the ping was sent, which is when the cache's clock restarted (`t` is when it was scored). */
+  sentAt?: string
   /** handoff-failed: which step refused (no-brief, spawn). fork-failed: the fork's reason (nothing-to-fork, api-error, ...). */
   failure?: string
   /** fork-failed: what follows it: another fork, the wake turn, or nothing (too late to land warm). */

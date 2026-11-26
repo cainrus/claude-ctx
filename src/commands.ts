@@ -71,10 +71,11 @@ function mainTurnSince(path: string, sinceMs: number, ctx: Ctx): MainTurn {
   // WORKAROUND: the Stop hook can run before Claude Code flushed the turn's assistant entry (seen live), and a read then
   // returns the PREVIOUS turn's usage. Poll for an entry no older than the turn's start; undefined = record it unscored.
   for (let waited = 0; ; waited += CATCH_UP_STEP_MS) {
-    const turn = lastMainTurn(path)
+    const turn = lastMainTurn(path, undefined, sinceMs)
     const usage = turn.usage
     if (usage && (usage.timestamp === undefined || usage.timestamp >= sinceMs)) return turn
-    if (waited >= TRANSCRIPT_CATCH_UP_MS) return { requestStart: turn.requestStart }
+    // Not caught up: any request start in the file belongs to an earlier turn.
+    if (waited >= TRANSCRIPT_CATCH_UP_MS) return {}
     sleep(CATCH_UP_STEP_MS)
   }
 }
@@ -142,26 +143,28 @@ export function record(input: HookInput, ctx: Ctx): number {
 
   const turnBegan = state.pendingPing && state.pingTransport !== 'fork' ? (state.lastPingAt ?? 0) : (state.lastHumanAt ?? 0)
   const turn: MainTurn = state.transcriptPath ? mainTurnSince(state.transcriptPath, turnBegan, ctx) : {}
-  const { usage, requestStart: startedAt } = turn
+  const { usage } = turn
 
   // WARNING: the TTL restarted at the last assistant entry's timestamp, not this hook's clock. With delay == minAgeSec,
   // "now" could land after the sleeper this Stop started and make it look stale. An entry older than the last prompt = not caught up: now.
   const ts = usage?.timestamp
   state.lastTurnEndAt = ts !== undefined && ts >= (state.lastHumanAt ?? 0) ? Math.min(ts, ctx.now) : ctx.now
-  // The cache lifetime counts from the request's start: the user entry that sent it, never later than the turn's end.
-  state.lastRequestAt = startedAt !== undefined && startedAt <= state.lastTurnEndAt ? startedAt : state.lastTurnEndAt
+  // WARNING: lastRequestAt stays Claude Code's own clock (compactedSinceRequest, compactCheck's #105017 test read it): never the request start.
+  state.lastRequestAt = state.lastTurnEndAt
+  // The server's clock runs from the request's start. Trusted only inside this turn and not after its answer; else the answer time.
+  const started = turn.requestStart
+  state.cacheAnchorAt = started !== undefined && started >= turnBegan && started <= state.lastTurnEndAt ? started : state.lastTurnEndAt
   state.forkPingsHeld = 0
 
   if (usage) {
     state.ctxTokens = usage.ctxTokens
     if (usage.model) state.model = usage.model
     Object.assign(state, turnPrices(state.ctxTokens, state.model, ctx.config.prices))
-    if (usage.ttlSec !== undefined) state.cacheTtlSec = usage.ttlSec
+    // A read-only last request keeps the bucket an earlier request of the same turn wrote; a turn that wrote none keeps the previous one.
+    if (turn.ttlSec !== undefined) state.cacheTtlSec = turn.ttlSec
+    state.coldStartTokens ??= state.transcriptPath ? (firstMainUsage(state.transcriptPath)?.ctxTokens ?? 0) : 0
   }
-  if (state.coldStartUsd === undefined && state.transcriptPath) {
-    const first = firstMainUsage(state.transcriptPath)
-    if (first) state.coldStartUsd = turnPrices(first.ctxTokens, state.model ?? first.model, ctx.config.prices).coldTurnUsd
-  }
+  if (state.coldStartTokens) state.coldStartUsd = turnPrices(state.coldStartTokens, state.model, ctx.config.prices).coldTurnUsd
 
   // INVARIANT: only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook
   // may have blocked the turn: a spurious miss would mute the session for good). A fork is scored by `forked`.
@@ -178,6 +181,7 @@ export function record(input: HookInput, ctx: Ctx): number {
         t: iso(ctx.now),
         sessionId: sid,
         event: manual ? 'manual-ping' : hit ? 'wake-hit' : 'wake-miss',
+        ...(state.lastPingAt !== undefined ? { sentAt: iso(state.lastPingAt) } : {}),
         ...(handoffTurn && !manual ? { detail: 'handoff' } : {}),
         ctxTokens: usage.ctxTokens,
         model: usage.model,

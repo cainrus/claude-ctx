@@ -22,7 +22,7 @@ import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
 import { wakeCostUsd } from '../src/report.ts'
 import { forkClaimPath, loadForkClaim, loadSession, saveForkClaim, saveSession } from '../src/state.ts'
-import { configFor, makeCtx, MIN, SID, tempHome, writeTranscript, type TestCtx } from './helpers.ts'
+import { assistantLine, configFor, makeCtx, MIN, SID, tempHome, userLine, writeLines, writeTranscript, type TestCtx } from './helpers.ts'
 
 const T0 = Date.parse('2026-01-01T10:00:00.000Z')
 const BIG = { read: 90_000, write: 1_000 }
@@ -173,6 +173,8 @@ test('forked: a read of the prefix is a hit; the next ping is timed from the for
   assert.equal(s.pendingPing, false)
   assert.equal(s.lastPingHit, true)
   assert.equal(s.lastTurnEndAt, at + 4000)
+  assert.equal(s.cacheAnchorAt, at, 'the server clock restarted when the fork was sent, not when it came back')
+  assert.equal(s.lastRequestAt, T0, 'Claude Code clock: a fork never moves it')
   assert.equal(s.forkPingsHeld, 1)
   assert.equal(loadForkClaim(home, SID), at + 4000)
   const hit = readLedger(home).at(-1)!
@@ -180,6 +182,8 @@ test('forked: a read of the prefix is a hit; the next ping is timed from the for
   assert.equal(hit.transport, 'fork')
   assert.equal(hit.cacheRead, 91_000)
   assert.equal(hit.cacheWrite, 300)
+  assert.equal(hit.sentAt, new Date(at).toISOString())
+  assert.equal(hit.t, new Date(at + 4000).toISOString())
   // The status line's running total is the report's price of the same entry.
   assert.ok(s.pingCostUsd! > 0)
   assert.equal(s.pingCostUsd, wakeCostUsd(hit, config.prices))
@@ -340,6 +344,19 @@ test('compact-check: after forks held the cache past the TTL, one wake turn goes
   assert.equal(renew.pings, 2)
 })
 
+// Policy reads lastRequestAt as Claude Code's own clock: the status line's request-start anchor must not move it.
+test('compact-check: timing counts from the answer of the last request, whatever the request start was', () => {
+  const home = tempHome()
+  const config = configFor(home)
+  const transcript = writeLines(home, [userLine(T0 - 25_000, 'do it'), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(config, T0 + 500))
+  assert.equal(loadSession(home, SID)!.lastRequestAt, T0)
+  saveSession(home, { ...loadSession(home, SID)!, forkPingsHeld: 1 })
+  // 5 minutes short of the TTL counted from T0; 25 s earlier it would already have read as cold from the request start.
+  assert.deepEqual(call(compactCheck, { trigger: 'manual' }, ctxAt(config, T0 + 55 * MIN - 10_000)), { action: 'pass' })
+  assert.deepEqual(call(compactCheck, { trigger: 'manual' }, ctxAt(config, T0 + 55 * MIN)), { action: 'renew', text: WAKE_MESSAGE })
+})
+
 test('compact-check: a turn since the forks puts Claude Code back in step', () => {
   const { config, transcript, lastFork } = heldByForks()
   record({ session_id: SID, transcript_path: transcript }, makeCtx(config, lastFork + MIN))
@@ -394,6 +411,7 @@ test('wait: a question holds the turn open; forks keep the cache, never a wake t
   // The request that asked renewed the cache: the stretch starts there.
   assert.deepEqual(waitStart({ session_id: SID }, ctxAt(config, asked), INTERACTIVE) === 0 && loadSession(home, SID)!.waitingSince, asked)
   assert.equal(loadSession(home, SID)!.lastTurnEndAt, asked)
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, asked)
 
   // The Stop sleeper armed by the last turn never sends a wake turn into the open one.
   saveForkClaim(home, SID, 0)

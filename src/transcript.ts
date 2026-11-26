@@ -18,9 +18,14 @@ export interface TurnUsage {
 
 export interface MainTurn {
   usage?: TurnUsage
-  /** Epoch ms the last model request started. */
+  /** Epoch ms the latest request started that is not newer than `usage` (a queued prompt, written already, is not its request). */
   requestStart?: number
+  /** The bucket of the newest request at or after the turn's start that wrote one. */
+  ttlSec?: 300 | 3600
 }
+
+/** Most a backward or forward scan reads: past this a transcript line is not worth the Stop hook's time. */
+export const MAX_SCAN_BYTES = 16 * 1024 * 1024
 
 const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
 
@@ -101,6 +106,7 @@ export function requestStartFromLine(line: string): number | undefined {
 }
 
 function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean): void {
+  let scanned = 0
   let fd: number
   try {
     fd = openSync(transcriptPath, 'r')
@@ -111,7 +117,7 @@ function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit:
     let end = fstatSync(fd).size
     let chunk = Math.max(1024, initialChunk)
     for (;;) {
-      const start = Math.max(0, end - chunk)
+      const start = Math.max(0, end - Math.min(chunk, MAX_SCAN_BYTES - scanned))
       const buf = Buffer.alloc(end - start)
       readSync(fd, buf, 0, buf.length, start)
       const lines = buf.toString('utf8').split('\n')
@@ -119,7 +125,8 @@ function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit:
       for (let i = lines.length - 1; i >= from; i--) {
         if (visit(lines[i])) return
       }
-      if (start === 0) return
+      scanned += buf.length
+      if (start === 0 || scanned >= MAX_SCAN_BYTES) return
       const firstBreak = buf.indexOf(0x0a)
       end = start + (firstBreak < 0 ? buf.length : firstBreak)
       chunk *= 4
@@ -138,19 +145,36 @@ function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: 
   })
 }
 
-/** The last main-thread usage and when the last request started, in one backward pass: the cache lifetime counts from the start, not from the answer. */
-export function lastMainTurn(transcriptPath: string, initialChunk = 256 * 1024): MainTurn {
+/** The last main-thread usage, when its request started and which bucket the turn (from `sinceMs`) wrote, in one backward pass. */
+export function lastMainTurn(transcriptPath: string, initialChunk = 256 * 1024, sinceMs = 0): MainTurn {
   const turn: MainTurn = {}
+  // Starts met before the answer was (newer lines in the file): the answer decides which of them is its own.
+  const newer: number[] = []
+  let turnOver = false
   scanLinesBackwards(transcriptPath, initialChunk, (line) => {
-    turn.usage ??= usageFromLine(line)
-    turn.requestStart ??= requestStartFromLine(line)
-    return turn.usage !== undefined && turn.requestStart !== undefined
+    const u = usageFromLine(line)
+    if (u) {
+      if (turn.usage === undefined) {
+        turn.usage = u
+        turn.requestStart = newer.find((s) => s <= (u.timestamp ?? Infinity))
+      }
+      if (u.timestamp !== undefined && u.timestamp < sinceMs) turnOver = true
+      else if (!turnOver) turn.ttlSec ??= u.ttlSec
+    } else if (turn.requestStart === undefined) {
+      const s = requestStartFromLine(line)
+      if (s !== undefined) {
+        if (turn.usage === undefined) newer.push(s)
+        else if (s <= (turn.usage.timestamp ?? Infinity)) turn.requestStart = s
+      }
+    }
+    return turn.usage !== undefined && turn.requestStart !== undefined && (turn.ttlSec !== undefined || turnOver)
   })
+  if (turn.usage === undefined && newer.length > 0) turn.requestStart = newer[0]
   return turn
 }
 
 /** The session's first main-thread request, read from the front: the size of a start with nothing but the system prompt. */
-export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024): TurnUsage | undefined {
+export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024, maxBytes = MAX_SCAN_BYTES): TurnUsage | undefined {
   let fd: number
   try {
     fd = openSync(transcriptPath, 'r')
@@ -160,9 +184,12 @@ export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024): TurnU
   try {
     const buf = Buffer.alloc(chunk)
     let carry = Buffer.alloc(0)
+    let scanned = 0
     for (;;) {
       const got = readSync(fd, buf, 0, chunk, null)
       if (got === 0) return usageFromLine(carry.toString('utf8'))
+      scanned += got
+      if (scanned > maxBytes) return undefined
       // WARNING: decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
       const bytes = Buffer.concat([carry, buf.subarray(0, got)])
       const lastBreak = bytes.lastIndexOf(0x0a)
