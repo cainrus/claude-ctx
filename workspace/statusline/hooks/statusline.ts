@@ -226,58 +226,82 @@ async function refreshMeta($: $, s: Settings): Promise<void> {
   }
 }
 
-/** Counts the looks at the worked-on folder; only the newest one writes. */
+/** Counts the looks at the worked-on folder; only the newest one writes. Never reset: a look still pending from before must not match. */
 let workdirGen = 0
+/** When the look in flight started, by the wall clock; undefined when none runs. */
+let workdirSince: number | undefined
+/** A look in flight this long is hung on an engine call: the next one may start, and the hung one's answer is dropped. */
+const WORKDIR_HUNG_MS = 30_000
+/** The folder worked on, whole: set with `facts.dir`, before its git refresh, so a refresh started after it uses it. */
+let workdirPath: string | undefined
 
 async function refreshWorkdir($: $, s: Settings): Promise<void> {
+  // Claimed before the first await, so two callers in one turn of the loop cannot both pass; a clock that stepped back frees it.
+  const now = Date.now()
+  if (workdirSince !== undefined && now - workdirSince >= 0 && now - workdirSince < WORKDIR_HUNG_MS) return
+  workdirSince = now
   const gen = ++workdirGen
-  workdirAt = await $.clock.now()
-  const cwd = await $.session.cwd()
-  let inputs: unknown[] = []
   try {
-    const rows = await $.session.messages({ last: WORKDIR_MESSAGES })
-    if (Array.isArray(rows)) inputs = rows.filter((m) => m.role === 'assistant').flatMap((m) => m.toolUses.map((t) => t.input))
-  } catch {
-    // No rows to read: the session's own folder.
+    workdirAt = await $.clock.now()
+    const cwd = await $.session.cwd()
+    let inputs: unknown[] = []
+    try {
+      const rows = await $.session.messages({ last: WORKDIR_MESSAGES })
+      if (Array.isArray(rows)) inputs = rows.filter((m) => m.role === 'assistant').flatMap((m) => m.toolUses.map((t) => t.input))
+    } catch {
+      // No rows to read: the session's own folder.
+    }
+    const dir = await workdirOf(fsOf($), cwd, candidatesOf(inputs, s.home, s.ignore))
+    // A look the cap gave up on answers from older inputs than the one that started after it: it writes nothing.
+    if (gen !== workdirGen) return
+    workdirPath = dir
+    facts.dir = dir.split('/').pop() || dir
+    await refreshGit($, s, dir)
+  } finally {
+    if (gen === workdirGen) workdirSince = undefined
   }
-  const dir = await workdirOf(fsOf($), cwd, candidatesOf(inputs, s.home, s.ignore))
-  // A look a newer one started after (a slow or hung one) answers from older inputs: it writes nothing.
-  if (gen !== workdirGen) return
-  facts.dir = dir.split('/').pop() || dir
-  await refreshGit($, s, dir)
 }
 
 let gitDirOf: { dir: string; gitDir?: string; top?: string } | undefined
+/** Counts the git refreshes; only the newest one writes, so a tick and a look never mix two folders' facts. */
+let gitGen = 0
 
 async function refreshGit($: $, s: Settings, dir?: string): Promise<void> {
+  const gen = ++gitGen
   const fs = fsOf($)
-  const target = dir ?? gitDirOf?.dir ?? (await $.session.cwd())
+  const target = dir ?? workdirPath ?? (await $.session.cwd())
+  let known = gitDirOf
   // A folder outside a repository is asked again each time: a `git init` or clone there shows up by the next tick.
-  if (gitDirOf?.dir !== target || gitDirOf.gitDir === undefined) {
+  if (known?.dir !== target || known.gitDir === undefined) {
     const g = await gitFactsOf(fs, target)
-    gitDirOf = { dir: target, ...(g ? { gitDir: g.gitDir, top: g.top } : {}) }
+    known = { dir: target, ...(g ? { gitDir: g.gitDir, top: g.top } : {}) }
   }
-  const gitDir = gitDirOf.gitDir
+  const gitDir = known.gitDir
   let branch = gitDir === undefined ? undefined : branchOfHead(await fs.read(`${gitDir}/HEAD`).catch(() => ''))
   const id = facts.sessionId
   if (s.branchDir !== undefined && id !== undefined && /^[A-Za-z0-9_-]+$/.test(id)) {
     const working = (await fs.read(`${s.branchDir}/${id}`).catch(() => '')).trim()
     if (working !== '') branch = working
   }
-  if (branch === undefined || gitDir === undefined) {
+  const cacheFile = gitDir === undefined ? undefined : `${s.cacheDir}/git/${cacheKey(gitDir)}`
+  const [cached, cacheStat, index, head] = cacheFile === undefined || branch === undefined
+    ? ['', undefined, undefined, undefined]
+    : await Promise.all([
+        fs.read(cacheFile).catch(() => ''),
+        fs.stat(cacheFile).catch(() => undefined),
+        fs.stat(`${gitDir}/index`).catch(() => undefined),
+        fs.stat(`${gitDir}/HEAD`).catch(() => undefined),
+      ])
+  const nowSec = Math.floor((await $.clock.now()) / 1000)
+  if (gen !== gitGen) return
+  gitDirOf = known
+  if (branch === undefined || gitDir === undefined || cacheFile === undefined) {
     delete facts.branch
     delete facts.dirty
     delete facts.ahead
     return
   }
   facts.branch = branch
-  const cacheFile = `${s.cacheDir}/git/${cacheKey(gitDir)}`
-  const [cached, cacheStat, index, head] = await Promise.all([
-    fs.read(cacheFile).catch(() => ''),
-    fs.stat(cacheFile).catch(() => undefined),
-    fs.stat(`${gitDir}/index`).catch(() => undefined),
-    fs.stat(`${gitDir}/HEAD`).catch(() => undefined),
-  ])
   const counts = parseCounts(cached)
   const dirty = dirtyOf(counts)
   if (dirty === undefined) delete facts.dirty
@@ -286,8 +310,8 @@ async function refreshGit($: $, s: Settings, dir?: string): Promise<void> {
   else facts.ahead = counts.ahead
   const cachedAt = cacheStat?.mtimeMs ?? 0
   const moved = (index?.mtimeMs ?? 0) > cachedAt || (head?.mtimeMs ?? 0) > cachedAt
-  if (passDue(counts, Math.floor((await $.clock.now()) / 1000), moved) !== undefined && gitDirOf.top !== undefined) {
-    void cli($, 'git', { workdir: gitDirOf.top, gitDir, cacheFile })
+  if (passDue(counts, nowSec, moved) !== undefined && known.top !== undefined) {
+    void cli($, 'git', { workdir: known.top, gitDir, cacheFile })
   }
 }
 
@@ -449,7 +473,8 @@ export function resetForTest(): void {
   text = undefined
   turn = { inUsd: 0, outUsd: 0 }
   workdirAt = 0
-  workdirGen = 0
+  workdirSince = undefined
+  workdirPath = undefined
   gitDirOf = undefined
   for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k]
 }

@@ -104,9 +104,14 @@ test('an engine call that fails under a measurement is swallowed, not left unhan
   await settle()
 })
 
-test('a look at the folder that a newer one overtook writes nothing when it answers late', async () => {
+test('one look at the folder at a time; a hung one holds the next back 30 s, and its late answer is dropped', async (t) => {
   const { $ } = engine()
   let clock = NOW
+  const realNow = Date.now
+  Date.now = () => clock
+  t.after(() => {
+    Date.now = realNow
+  })
   let release: (rows: unknown[]) => void = () => {}
   const cwds = ['/Users/u/p/old', '/Users/u/p/new']
   let calls = 0
@@ -122,12 +127,17 @@ test('a look at the folder that a newer one overtook writes nothing when it answ
   assert.equal(calls, 1, 'the first look waits on the engine')
   clock += 10_000
   statuslineStepAnswered($, {}, null)
+  statuslineStepAnswered($, {}, null)
   await settle()
-  assert.equal(calls, 2, 'the next look does not wait for it')
+  assert.equal(calls, 1, 'held back while it may still answer: no pile of looks')
+  clock += 25_000
+  statuslineStepAnswered($, {}, null)
+  await settle()
+  assert.equal(calls, 2, 'past the cap the next look starts')
   assert.match(plain(renderStatusLine($, site(), echo).props.text!), / new($| · )/)
   release([])
   await settle()
-  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / new($| · )/, 'the late answer of the older look is dropped')
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / new($| · )/, 'the hung look\'s late answer is dropped')
 })
 
 test('the session record, the account table and the session URL reach the line', async () => {
@@ -210,6 +220,8 @@ test('settings: ~ and relative folders resolve, the config dir is never a worked
   assert.deepEqual(s.accounts, {})
   assert.equal(s.cacheDir, '/Users/u/.cache/claude-statusline')
   assert.equal(settingsFrom({ HOME: '/h', XDG_CACHE_HOME: '/x' }).cacheDir, '/x/claude-statusline')
+  assert.equal(settingsFrom({ CTX_STATUSLINE_DISABLED: '0' }).disabled, false, '0 turns it back on')
+  assert.equal(settingsFrom({ CTX_STATUSLINE_DISABLED: 'yes' }).disabled, true)
 })
 
 test('the README lists every setting', () => {

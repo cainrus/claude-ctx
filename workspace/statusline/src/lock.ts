@@ -11,7 +11,12 @@ import { join } from 'node:path'
 
 /** A lock older than this is a dead holder's and is taken over. */
 export const LOCK_MAX_AGE_SEC = 60
-/** A takeover in progress older than this is a dead taker's: a live one takes milliseconds, and the journal's wait (6 s) outlasts this. */
+/**
+ * A takeover in progress older than this is a dead taker's: a live one takes
+ * milliseconds. A taker stalled past it (a laptop asleep mid-takeover) can share
+ * the lock with the next, which costs what no lock costs: a duplicate journal
+ * line or a second git count.
+ */
 const TAKEOVER_MAX_AGE_SEC = 3
 
 /** What `takeLock` hands back: the proof that frees it. */
