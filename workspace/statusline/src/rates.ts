@@ -66,8 +66,8 @@ export function recordRates(dir: string, account: string, session: string, at: n
   if (next.five.pct === null && next.week.pct === null) return false
   mkdirSync(dir, { recursive: true })
   // Two sessions of one account reading one new step in the same moment would both append it: one at a time.
-  // A holder keeps it for milliseconds, so a dead one's is stale in seconds, and the wait outlasts that.
-  return withLock(join(dir, `${account}.lock`), () => appendStep(dir, account, session, at, next), { waitMs: 6000, maxAgeSec: 4 }) ?? false
+  // A lock that never comes free (a dead holder) costs a possible duplicate line, never a lost step.
+  return withLock(join(dir, `${account}.lock`), () => appendStep(dir, account, session, at, next))
 }
 
 function appendStep(dir: string, account: string, session: string, at: number, next: RatePair): boolean {

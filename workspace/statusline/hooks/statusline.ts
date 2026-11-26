@@ -226,19 +226,28 @@ async function refreshMeta($: $, s: Settings): Promise<void> {
   }
 }
 
+let workdirBusy = false
+
 async function refreshWorkdir($: $, s: Settings): Promise<void> {
-  workdirAt = await $.clock.now()
-  const cwd = await $.session.cwd()
-  let inputs: unknown[] = []
+  // One look at a time: a slow one and the tick's retry would both write the folder and the git facts.
+  if (workdirBusy) return
+  workdirBusy = true
   try {
-    const rows = await $.session.messages({ last: WORKDIR_MESSAGES })
-    if (Array.isArray(rows)) inputs = rows.filter((m) => m.role === 'assistant').flatMap((m) => m.toolUses.map((t) => t.input))
-  } catch {
-    // No rows to read: the session's own folder.
+    workdirAt = await $.clock.now()
+    const cwd = await $.session.cwd()
+    let inputs: unknown[] = []
+    try {
+      const rows = await $.session.messages({ last: WORKDIR_MESSAGES })
+      if (Array.isArray(rows)) inputs = rows.filter((m) => m.role === 'assistant').flatMap((m) => m.toolUses.map((t) => t.input))
+    } catch {
+      // No rows to read: the session's own folder.
+    }
+    const dir = await workdirOf(fsOf($), cwd, candidatesOf(inputs, s.home, s.ignore))
+    facts.dir = dir.split('/').pop() || dir
+    await refreshGit($, s, dir)
+  } finally {
+    workdirBusy = false
   }
-  const dir = await workdirOf(fsOf($), cwd, candidatesOf(inputs, s.home, s.ignore))
-  facts.dir = dir.split('/').pop() || dir
-  await refreshGit($, s, dir)
 }
 
 let gitDirOf: { dir: string; gitDir?: string; top?: string } | undefined
@@ -443,6 +452,7 @@ export function resetForTest(): void {
   text = undefined
   turn = { inUsd: 0, outUsd: 0 }
   workdirAt = 0
+  workdirBusy = false
   gitDirOf = undefined
   for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k]
 }

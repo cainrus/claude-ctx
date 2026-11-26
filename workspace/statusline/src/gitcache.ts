@@ -45,7 +45,9 @@ export function refreshCounts(workdir: string, gitDir: string, cacheFile: string
   if (pass === undefined) return false
   mkdirSync(dirname(cacheFile), { recursive: true })
   const lock = `${cacheFile}.lock`
-  if (!takeLock(lock, nowSec)) return false
+  // Two git calls on their budget stay well inside the lock's minute.
+  const token = takeLock(lock, nowSec)
+  if (token === undefined) return false
   try {
     const next: GitCounts = { ...before }
     const status = git(workdir, ['status', '--porcelain', `--untracked-files=${pass === 'full' ? 'normal' : 'no'}`])
@@ -64,6 +66,6 @@ export function refreshCounts(workdir: string, gitDir: string, cacheFile: string
     renameSync(tmp, cacheFile)
     return true
   } finally {
-    releaseLock(lock)
+    releaseLock(lock, token)
   }
 }

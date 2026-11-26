@@ -135,7 +135,8 @@ const PATH_CHARS = /[A-Za-z0-9._@/-]+/
  * folder, and none in a config dir (`~/.claude`, `~/.claude-work2`, ...).
  */
 export function candidatesOf(inputs: readonly unknown[], home: string, ignore: readonly string[]): string[] {
-  const configDir = new RegExp(`^${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude(-[^/]+)?(/|$)`)
+  // `~/.claude`, `~/.claude-work2/...`, `~/.claude.json`; not `~/.claudette`.
+  const configDir = new RegExp(`^${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/\\.claude([-.][^/]*)?(/|$)`)
   const ignored = (p: string) => configDir.test(p) || ignore.some((i) => i !== '' && (p === i.replace(/\/+$/, '') || p.startsWith(i.endsWith('/') ? i : `${i}/`)))
   const re = new RegExp(`${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/${PATH_CHARS.source}`, 'g')
   const found: string[] = []

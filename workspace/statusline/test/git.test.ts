@@ -7,13 +7,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { branchOfHead, cacheKey, candidatesOf, dirtyOf, gitFactsOf, parseCounts, passDue, workdirOf, type FsLike } from '../hooks/gitfacts.ts'
 import { refreshCounts } from '../src/gitcache.ts'
-import { takeLock, withLock } from '../src/lock.ts'
+import { releaseLock, takeLock, withLock } from '../src/lock.ts'
 
 const fs: FsLike = {
   read: (p) => readFile(p, 'utf8'),
@@ -128,25 +128,49 @@ test('a held lock means another process refreshes: this one runs nothing', (t) =
   const file = join(r.cache, 'git', cacheKey(gitDir))
   mkdirSync(join(r.cache, 'git'), { recursive: true })
   const now = Math.floor(Date.now() / 1000)
-  assert.equal(takeLock(`${file}.lock`, now), true)
+  assert.ok(takeLock(`${file}.lock`, now))
   assert.equal(refreshCounts(r.main, gitDir, file), false)
   assert.throws(() => statSync(file), 'nothing written')
-  assert.equal(takeLock(`${file}.lock`, now + 61), true, 'a lock past its minute is a dead refresher, taken over')
-  assert.equal(takeLock(`${file}.lock`, now + 61), false, 'and the one who took it over holds it')
+  assert.ok(takeLock(`${file}.lock`, now + 61), 'a lock past its minute is a dead refresher, taken over')
+  assert.equal(takeLock(`${file}.lock`, now + 61), undefined, 'and the one who took it over holds it')
 })
 
-test('withLock waits for a held lock, then runs; past its wait it runs nothing', (t) => {
+test('withLock waits for a held lock, and past its wait runs anyway: a stuck lock never drops the work', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const lock = join(root, 'x.lock')
   assert.equal(withLock(lock, () => 1), 1)
-  assert.equal(takeLock(lock, Math.floor(Date.now() / 1000)), true, 'released after the run')
-  assert.equal(withLock(lock, () => 2, { waitMs: 120 }), undefined)
+  const token = takeLock(lock, Math.floor(Date.now() / 1000))
+  assert.ok(token, 'released after the run')
+  const started = Date.now()
+  assert.equal(withLock(lock, () => 2, 120), 2)
+  assert.ok(Date.now() - started >= 100, 'it waited first')
+  assert.equal(readFileSync(join(lock, 'at'), 'utf8').includes(token!), true, 'and left the holder\'s lock alone')
+})
+
+test('a release frees only its own lock: a holder taken over while it stalled frees nothing', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const lock = join(root, 'x.lock')
+  const slow = takeLock(lock, 1000)!
+  const next = takeLock(lock, 2000)!
+  assert.ok(next, 'stale, taken over')
+  releaseLock(lock, slow)
+  assert.equal(takeLock(lock, 2000), undefined, 'the new holder still holds it')
+  releaseLock(lock, next)
+  assert.ok(takeLock(lock, 2000))
 })
 
 test('a config dir is never a worked-on folder, an ignored folder only on its own boundary', () => {
   const home = '/Users/u'
-  const inputs = [{ file_path: '/Users/u/.claude-work2/x' }, { file_path: '/Users/u/.claude/y' }, { file_path: '/Users/u/.claudette/z' }, { file_path: '/Users/u/tmpfoo/a' }, { file_path: '/Users/u/tmp/b' }]
+  const inputs = [
+    { file_path: '/Users/u/.claude-work2/x' },
+    { file_path: '/Users/u/.claude/y' },
+    { file_path: '/Users/u/.claude.json' },
+    { file_path: '/Users/u/.claudette/z' },
+    { file_path: '/Users/u/tmpfoo/a' },
+    { file_path: '/Users/u/tmp/b' },
+  ]
   assert.deepEqual(candidatesOf(inputs, home, ['/Users/u/tmp']), ['/Users/u/tmpfoo/a', '/Users/u/.claudette/z'])
 })
 
@@ -154,20 +178,26 @@ test('of two takers that both saw a lock stale, the second finds the first one\'
   const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   const lock = join(root, 'x.lock')
-  assert.equal(takeLock(lock, 1000), true)
-  assert.equal(takeLock(lock, 2000), true, 'first taker: stale, taken over')
-  assert.equal(takeLock(lock, 2000), false, 'second taker, same moment: the lock is fresh now')
+  assert.ok(takeLock(lock, 1000))
+  assert.ok(takeLock(lock, 2000), 'first taker: stale, taken over')
+  assert.equal(takeLock(lock, 2000), undefined, 'second taker, same moment: the lock is fresh now')
   mkdirSync(`${lock}.takeover`)
-  assert.equal(takeLock(lock, 9000), false, 'a takeover in progress is left to its taker')
+  assert.equal(takeLock(lock, 9000), undefined, 'a takeover in progress is left to its taker')
 })
 
-test('a lock folder with no stamp yet is a holder between mkdir and its write, not a stale lock', (t) => {
+test('a lock folder with no stamp yet is aged by its folder\'s time: fresh, held; old, taken over', (t) => {
   const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
-  const lock = join(root, 'x.lock')
-  mkdirSync(lock)
-  writeFileSync(join(lock, 'at'), '')
-  assert.equal(takeLock(lock, Math.floor(Date.now() / 1000)), false)
+  const now = Math.floor(Date.now() / 1000)
+  const missing = join(root, 'missing.lock')
+  mkdirSync(missing)
+  assert.equal(takeLock(missing, now), undefined, 'no stamp file at all, just made')
+  const empty = join(root, 'empty.lock')
+  mkdirSync(empty)
+  writeFileSync(join(empty, 'at'), '')
+  assert.equal(takeLock(empty, now), undefined, 'an empty stamp, just made')
+  utimesSync(missing, now - 120, now - 120)
+  assert.ok(takeLock(missing, now), 'a holder that died between its mkdir and its write ages out')
 })
 
 test('which pass is due: untracked every two minutes, tracked every 20 s or when the index moved', () => {
