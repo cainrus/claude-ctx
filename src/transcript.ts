@@ -92,7 +92,6 @@ function promptText(content: unknown): string {
 }
 
 /** Epoch ms of a main-thread `user` entry that a model request follows; undefined for any other line. */
-// INVARIANT: hooks/status.ts `requestStartOf` is the mod's copy of this rule; keep the two in step (test/status.test.ts runs one table on both).
 export function requestStartFromLine(line: string): number | undefined {
   if (!line.includes('"user"')) return undefined
   let rec: any

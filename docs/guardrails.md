@@ -25,7 +25,6 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/state.ts:89`](../src/state.ts#L89) an id that is not a plain UUID is flattened so it cannot escape the sessions directory.
 - [`src/transcript.ts:33`](../src/transcript.ts#L33) hooks/status.ts `ttlOfUsage` is the mod's copy of this rule (it also reads the flat form of a `turn.step` usage); keep the two in step (test/status.test.ts runs one table on both).
 - [`src/transcript.ts:55`](../src/transcript.ts#L55) sidechain (subagent) and synthetic entries are skipped: their usage is not the main thread's cache.
-- [`src/transcript.ts:95`](../src/transcript.ts#L95) hooks/status.ts `requestStartOf` is the mod's copy of this rule; keep the two in step (test/status.test.ts runs one table on both).
 - [`hooks/band.ts:145`](../hooks/band.ts#L145) a failure draws what the engine would: the band must never break a session.
 - [`hooks/gate.ts:36`](../hooks/gate.ts#L36) fail open: a timeout, a spawn failure or output that is not JSON lets the input through.
 - [`hooks/keepalive.ts:34`](../hooks/keepalive.ts#L34) once a question is answered nothing arms until its turn's turn.complete: a fork's result would re-arm inside the turn.
@@ -70,8 +69,8 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/prices.ts:79`](../src/prices.ts#L79) family keys ("opus", the pre-0.6.6 form) apply first and rewrite every row they name, so a model-prefix override still wins over its family.
 - [`src/state.ts:117`](../src/state.ts#L117) a file apart from the session's: the mod claims at turn end, just when `record` rewrites the session file, and one write would drop the other's.
 - [`src/state.ts:163`](../src/state.ts#L163) this counts from `lastTurnEndAt` with the config TTL, as the ping timer does. The status line (hooks/status.ts) anchors at `cacheAnchorAt` (the request's start) with the bucket the turn wrote, because that is when the server's clock runs; the two ends can differ.
-- [`src/transcript.ts:240`](../src/transcript.ts#L240) decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
-- [`src/transcript.ts:270`](../src/transcript.ts#L270) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
+- [`src/transcript.ts:239`](../src/transcript.ts#L239) decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
+- [`src/transcript.ts:269`](../src/transcript.ts#L269) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
 - [`hooks/band.ts:21`](../hooks/band.ts#L21) status.ts imports this module too. Use its functions at call time only: a const of it read while this module loads is not initialised yet.
 - [`hooks/gate.ts:42`](../hooks/gate.ts#L42) a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts) and the status line (status.ts) are called from these hooks.
 - [`hooks/keepalive.ts:58`](../hooks/keepalive.ts#L58) not awaited: it resolves only once the turn starts, which is after the calling hook returns.
