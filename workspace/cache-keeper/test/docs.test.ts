@@ -12,7 +12,7 @@ test('the docs match the code: run `node scripts/docs.ts` after changing SETTING
   assert.deepEqual(staleDocs(), [])
 })
 
-test('every setting /cache-keeper:status reports is documented, and every documented key exists', () => {
+test('every setting /ctx:status reports is documented, and every documented key exists', () => {
   const reported = settingsOf(loadConfig(NO_HOME), NO_HOME).map((s) => s.key)
   const documented = SETTINGS.flatMap((s) => (s.key === undefined ? [] : [s.key]))
   // env-only settings status still names by their Config field

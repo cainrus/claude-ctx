@@ -7,13 +7,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
 import { record } from '../src/commands.ts'
 import { loadSession } from '../src/state.ts'
 import { bandOn, LEGEND, partsOf, renderBand, setBand, type BandView } from '../hooks/band.ts'
-import { configFor, makeCtx, MIN, SID, tempHome, writeTranscript } from './helpers.ts'
+import { configFor, makeCtx, MIN, PLUGIN_ROOT, SID, tempHome, writeTranscript } from './helpers.ts'
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const T = 1_800_000_000_000
 
 type Node = { tag: string; props: Record<string, unknown>; children: unknown[] }
@@ -93,7 +91,7 @@ function fakeEngine(home: string) {
   const cliEnv: NodeJS.ProcessEnv = { HOME: '/nonexistent', CACHE_KEEPER_HOME: home }
   for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('CACHE_KEEPER_') && !(k in cliEnv)) cliEnv[k] = v
   const $ = {
-    plugin: { root: ROOT },
+    plugin: { root: PLUGIN_ROOT },
     session: { id: async () => SID },
     process: {
       run: async (argv: string[], opts: { stdin: string }) => {

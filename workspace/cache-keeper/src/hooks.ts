@@ -5,8 +5,8 @@ import { DEFAULT_DELAY_SEC } from './config.ts'
 // INVARIANT: every hook enters through bin/cache-keeper.sh: without a usable node it exits 0 in silence (`check` says why).
 export const LAUNCH = 'sh'
 
-/** The plugin form: Claude Code substitutes the variable before the shell sees it. */
-export const PLUGIN_SCRIPT = '"${CLAUDE_PLUGIN_ROOT}/bin/cache-keeper.sh"'
+/** The plugin form: Claude Code substitutes the variable before the shell sees it. The claude-ctx plugin root holds this package at workspace/cache-keeper. */
+export const PLUGIN_SCRIPT = '"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh"'
 
 export const TOUCH_TIMEOUT_SEC = 60
 

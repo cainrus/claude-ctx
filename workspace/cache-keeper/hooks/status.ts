@@ -185,7 +185,7 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
     text: errorLine({ lastError: { cmd: 'record' } }, '~/.claude-cache-keeper') ?? '',
     meaning:
       'a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is ' +
-      'logged there, counted by `report`, shown by `/cache-keeper:status`, and, without mods, told once an hour on ' +
+      'logged there, counted by `report`, shown by `/ctx:status`, and, without mods, told once an hour on ' +
       "the session's next prompt. The line goes away once a turn is recorded cleanly",
   },
   { text: '(nothing)', meaning: 'keeper is off, or `"statusLine": false`' },

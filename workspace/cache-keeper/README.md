@@ -1,7 +1,6 @@
-# claude-cache-keeper
+# cache-keeper
 
-[![CI](https://github.com/cainrus/claude-cache-keeper/actions/workflows/ci.yml/badge.svg)](https://github.com/cainrus/claude-cache-keeper/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+A package of the [claude-ctx](../../README.md) plugin (formerly `cainrus/claude-cache-keeper`).
 
 Keeps the prompt cache of an idle [Claude Code](https://docs.claude.com/en/docs/claude-code) session warm, but only
 while someone is plausibly coming back to it. Claude Code caches the conversation for one hour; an hour of idling
@@ -11,16 +10,19 @@ budget and its own ledger, when that ping is worth it. Pure Claude Code hooks: n
 no dependencies; TypeScript run directly by Node ≥ 22.18.
 
 ```sh
-claude plugin marketplace add cainrus/claude-cache-keeper
-claude plugin install cache-keeper@claude-cache-keeper
+claude plugin marketplace add cainrus/claude-ctx
+claude plugin install ctx@claude-ctx
 ```
+
+State, ledger and `config.json` live in `~/.claude-cache-keeper` (`CACHE_KEEPER_HOME`); every setting is a
+`CACHE_KEEPER_*` variable. The commands are `/ctx:done`, `/ctx:status` and `/ctx:ping`.
 
 ## Docs
 
 Each page is short and stands alone; open the one the question is about.
 
 - [How it works](docs/how-it-works.md): the problem, the hook chain, why hooks and not a proxy
-- [How it decides](docs/policy.md): the policy rows, presence, budgets, the self-tuning cap, `/cache-keeper:done`, `:status`, `:ping`
+- [How it decides](docs/policy.md): the policy rows, presence, budgets, the self-tuning cap, `/ctx:done`, `:status`, `:ping`
 - [Install](docs/install.md): Node requirement, plugin and non-plugin install
 - [Configuration](docs/config.md): every setting, its env variable and default (generated from the code)
 - [Status line](docs/status-line.md): every form of the line under the prompt (generated)
@@ -34,4 +36,4 @@ Each page is short and stands alone; open the one the question is about.
 
 ## License
 
-[Apache-2.0](LICENSE) © 2026 Sergei Tarassov
+[Apache-2.0](../../LICENSE) © 2026 Sergei Tarassov

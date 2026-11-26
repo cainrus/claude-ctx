@@ -4,7 +4,7 @@
  * no menu. The gate asks keeper at the first model request of such a turn and
  * before a manual `/compact`, and stops the input just as a typed prompt would be
  * stopped: the menu when a handoff brief waits on a cold cache (`handoff.enabled`),
- * or keeper's own answer to `/cache-keeper:status`. It runs where Claude Code
+ * or keeper's own answer to `/ctx:status`. It runs where Claude Code
  * loads the plugin's mod; any failure lets the input through.
  */
 
@@ -12,7 +12,7 @@ import type { EngineInterface, Register } from 'claude-code'
 // WORKAROUND: Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and
 // reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
 // @ts-ignore TS5097
-import { beforeCompact, isPingTurn, keepaliveCompacted, keepaliveStarted, keepaliveTurnDone, keepaliveWaitEnd, keepaliveWaitStart, manualPing } from './keepalive.ts'
+import { beforeCompact, cliArgv, isPingTurn, keepaliveCompacted, keepaliveStarted, keepaliveTurnDone, keepaliveWaitEnd, keepaliveWaitStart, manualPing } from './keepalive.ts'
 // @ts-ignore TS5097
 import { refresh, statusRequested, statusStarted, statusStepAnswered, statusTurnDone } from './status.ts'
 // @ts-ignore TS5097
@@ -26,7 +26,7 @@ async function askGate($: EngineInterface, text: string, turn = false): Promise<
   try {
     const sessionId = await $.session.id()
     const { exitCode, stdout } = await $.process.run(
-      ['node', '--disable-warning=ExperimentalWarning', `${$.plugin.root}/bin/cache-keeper.ts`, 'gate'],
+      cliArgv($, 'gate'),
       { stdin: JSON.stringify({ session_id: sessionId, prompt: text.slice(0, HELD_CHARS), gate_turn: turn }), timeoutMs: GATE_TIMEOUT_MS },
     )
     if (exitCode !== 0 || stdout.trim() === '') return undefined

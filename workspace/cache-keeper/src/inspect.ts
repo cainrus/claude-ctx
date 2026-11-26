@@ -1,6 +1,6 @@
 /**
- * `/cache-keeper:status` shows what keeper knows of this session (cached till when, pings used of the cap, context
- * size, whether pings go as forks, a missed ping, a mute by /cache-keeper:done, the last hook error, a compaction)
+ * `/ctx:status` shows what keeper knows of this session (cached till when, pings used of the cap, context
+ * size, whether pings go as forks, a missed ping, a mute by /ctx:done, the last hook error, a compaction)
  * and every setting in force with where it came from: `env`, `config.json`, `tuned` (the cap) or `default`.
  * It warns about settings that leave keeper unable to ping at all. The hook answers it: no model request is made.
  */
@@ -100,7 +100,7 @@ export function sessionLines(state: SessionState | undefined, config: Config, no
   const transport = forkOwns(state, config) ? 'forks (nothing lands in the transcript)' : 'wake turns'
   lines.push(`pings are sent as: ${transport}`)
   if (state.lastPingHit !== null) lines.push(`last ping: ${state.lastPingHit ? 'hit' : 'miss, so keeper stopped pinging this session'}`)
-  if (state.doneAt !== undefined) lines.push(`muted: by /cache-keeper:done at ${hhmm(state.doneAt)}, until your next message`)
+  if (state.doneAt !== undefined) lines.push(`muted: by /ctx:done at ${hhmm(state.doneAt)}, until your next message`)
   if (state.lastError) {
     lines.push(`error: the ${state.lastError.cmd} hook failed at ${hhmm(state.lastError.at)}: ${state.lastError.message} (log: ${errorLogPath(config.home)})`)
   }

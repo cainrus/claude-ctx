@@ -1,6 +1,6 @@
 {
   "modules": [
-    "./gate.ts"
+    "./ctx.ts"
   ],
   "hooks": {
     "SessionStart": [
@@ -8,7 +8,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/cache-keeper.sh\" check",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" check",
             "timeout": 10
           }
         ]
@@ -19,12 +19,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/cache-keeper.sh\" record",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" record",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = sdk-cli ] || { sleep \"${CACHE_KEEPER_DELAY_SEC:-3000}\"; sh \"${CLAUDE_PLUGIN_ROOT}/bin/cache-keeper.sh\" wake; }",
+            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = sdk-cli ] || { sleep \"${CACHE_KEEPER_DELAY_SEC:-3000}\"; sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" wake; }",
             "asyncRewake": true,
             "timeout": 7200
           }
@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/cache-keeper.sh\" touch",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" touch",
             "timeout": 60
           }
         ]
@@ -47,7 +47,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/bin/cache-keeper.sh\" end",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" end",
             "timeout": 10
           }
         ]

@@ -16,7 +16,7 @@ export function groupedTokens(n: number): string {
   return n.toLocaleString('en-US')
 }
 
-/** Why there is nothing to hold, shared by `/cache-keeper:status` and `/cache-keeper:ping`; each finishes a sentence. */
+/** Why there is nothing to hold, shared by `/ctx:status` and `/ctx:ping`; each finishes a sentence. */
 export const NOTHING_TO_HOLD = {
   noTurn: 'no turn has ended in this session yet, so nothing is cached',
   expired: (warmUntil: number) => `the cache expired at ${hhmm(warmUntil)}; your next message rewrites it`,

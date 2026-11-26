@@ -57,7 +57,7 @@ export interface Ctx {
   handoffIO?: HandoffIO
   /** Is this a background session, nobody at its input box (presence.ts)? Asked only at the menu. */
   background?: (transcriptPath?: string) => boolean
-  /** The environment the config came from, for `/cache-keeper:status`. Defaults to process.env. */
+  /** The environment the config came from, for `/ctx:status`. Defaults to process.env. */
   env?: NodeJS.ProcessEnv
 }
 
@@ -88,7 +88,7 @@ export function isWakePrompt(prompt: string | undefined): boolean {
   return typeof prompt === 'string' && prompt.includes(WAKE_MARKER)
 }
 
-export const DONE_COMMAND = '/cache-keeper:done'
+export const DONE_COMMAND = '/ctx:done'
 
 function isCommand(prompt: string | undefined, command: string): boolean {
   if (typeof prompt !== 'string') return false
@@ -101,14 +101,14 @@ export function isDoneCommand(prompt: string | undefined): boolean {
 }
 
 /** Answered by the prompt hook itself, like `done`. */
-export const STATUS_COMMAND = '/cache-keeper:status'
+export const STATUS_COMMAND = '/ctx:status'
 
 export function isStatusCommand(prompt: string | undefined): boolean {
   return isCommand(prompt, STATUS_COMMAND)
 }
 
 /** Let through by the prompt hook: the mod answers its turn with a fork, or commands/ping.md reaches the model as a wake turn. */
-export const PING_COMMAND = '/cache-keeper:ping'
+export const PING_COMMAND = '/ctx:ping'
 /** How commands/ping.md's body starts. */
 export const PING_MARKER = '[cache-keeper:ping]'
 

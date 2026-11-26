@@ -20,10 +20,10 @@ export const LEDGER_EVENTS = Object.freeze({
   'handoff-here': 'the menu was answered with continue here (`detail: "unattended"` in a background session)',
   'handoff-new': 'the menu was answered with a new session, and `spawnCommand` started it',
   'handoff-failed': 'no brief, or the new session did not start; `failure` says which step',
-  done: '`/cache-keeper:done`: no pings until the next real prompt',
+  done: '`/ctx:done`: no pings until the next real prompt',
   'fork-failed': 'a fork brought no reply; `failure` is its reason, `next` what follows (`retry`, `turn`, `drop`)',
   renew: 'a compaction after an hour held by forks alone was put off behind one wake turn',
-  'manual-ping': '`/cache-keeper:ping`; not scored, its cost is in the ping cost',
+  'manual-ping': '`/ctx:ping`; not scored, its cost is in the ping cost',
   error: 'a hook threw (errors.ts); `detail` is `<hook>: <message>`',
 } as const)
 

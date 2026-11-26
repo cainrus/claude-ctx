@@ -1,4 +1,4 @@
-# claude-cache-keeper — design
+# cache-keeper — design
 
 Keeps the prompt cache of an idle Claude Code session warm, but only while
 someone is plausibly coming back to it. Pure Claude Code hooks: no proxy in the
@@ -79,8 +79,8 @@ Not covered: Windows paths with backslashes in `$0` (untested under Git Bash).
    useful: the stretch had ≥1 ping and ended with a real prompt). The wake turn
    also fires `UserPromptSubmit`; it is recognised by the wake marker in
    `prompt` and ignored. Three plugin commands are no resume either:
-   `/cache-keeper:done` and `/cache-keeper:status` are answered and blocked
-   here (no model request); `/cache-keeper:ping` passes untouched, and the
+   `/ctx:done` and `/ctx:status` are answered and blocked
+   here (no model request); `/ctx:ping` passes untouched, and the
    mod answers its turn with a fork (`ping-now`, then `forked`), or lets it
    reach the model as a wake turn where it cannot. A ping by hand is logged as
    `manual-ping` and never scored.
@@ -109,7 +109,7 @@ it decides which reason the ledger blames.
 
 | # | refuse when | reason | default |
 |---|---|---|---|
-| 0 | the human ran `/cache-keeper:done` in this session (lifted by their next prompt) | `done` | — |
+| 0 | the human ran `/ctx:done` in this session (lifted by their next prompt) | `done` | — |
 | 1 | human away longer than `awaySec` (keyboard/mouse idle) | `away` | 1200 s |
 | 2 | human not at keyboard (> `presenceSec`) and the machine-wide away budget is spent | `away-budget-spent` | 300 s, 6 pings |
 | 3 | context smaller than `minCtxTokens` | `context-too-small` | 20 000 |

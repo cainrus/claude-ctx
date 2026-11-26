@@ -1,14 +1,15 @@
 {
-  "name": "cache-keeper",
-  "version": "0.7.0",
-  "description": "Keeps the prompt cache of an idle Claude Code session warm, only while someone is plausibly coming back. Pure hooks: no proxy, no MCP server, no dependencies.",
+  "name": "ctx",
+  "version": "0.8.0",
+  "description": "Claude Code session context, from one plugin: keeps an idle session's prompt cache warm while someone is plausibly coming back (cache-keeper) and draws the status line from the engine's own figures (statusline). Pure hooks and one mod: no proxy, no MCP server, no dependencies.",
   "author": {
     "name": "Sergei Tarassov",
     "email": "cainrus@gmail.com",
     "url": "https://github.com/cainrus"
   },
-  "homepage": "https://github.com/cainrus/claude-cache-keeper",
-  "repository": "https://github.com/cainrus/claude-cache-keeper",
+  "homepage": "https://github.com/cainrus/claude-ctx",
+  "repository": "https://github.com/cainrus/claude-ctx",
   "license": "Apache-2.0",
-  "keywords": ["prompt-cache", "keep-alive", "hooks", "cost"]
+  "keywords": ["prompt-cache", "keep-alive", "status-line", "hooks", "cost"],
+  "commands": "./workspace/cache-keeper/commands"
 }

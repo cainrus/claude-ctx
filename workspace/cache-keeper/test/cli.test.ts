@@ -15,13 +15,13 @@ import { buildHooks, PLUGIN_SCRIPT } from '../src/hooks.ts'
 import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
 import { sessionPath } from '../src/state.ts'
-import { assistantLine, SID, tempHome, writeTranscript } from './helpers.ts'
+import { assistantLine, PLUGIN_ROOT, SID, tempHome, writeTranscript } from './helpers.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
-const hooksJson = JSON.parse(readFileSync(join(ROOT, 'hooks/hooks.json'), 'utf8'))
+const hooksJson = JSON.parse(readFileSync(join(PLUGIN_ROOT, 'hooks/hooks.json'), 'utf8'))
 
 function command(event: 'Stop' | 'UserPromptSubmit' | 'SessionEnd', index = 0): string {
-  return (hooksJson.hooks[event][0].hooks[index].command as string).replaceAll('${CLAUDE_PLUGIN_ROOT}', ROOT)
+  return (hooksJson.hooks[event][0].hooks[index].command as string).replaceAll('${CLAUDE_PLUGIN_ROOT}', PLUGIN_ROOT)
 }
 
 interface Run {
@@ -52,22 +52,16 @@ function fresh() {
   return { home, env, transcript, stop }
 }
 
-test('hooks/hooks.json is exactly what the generator produces', () => {
-  const { modules, ...commands } = hooksJson
-  assert.deepEqual(modules, ['./gate.ts'])
+test('the plugin\'s hooks/hooks.json runs exactly the command hooks the generator produces', () => {
+  const { modules: _, ...commands } = hooksJson
   assert.deepEqual(commands, buildHooks(PLUGIN_SCRIPT))
   const waiter = hooksJson.hooks.Stop[0].hooks[1]
   assert.equal(waiter.asyncRewake, true)
   assert.match(waiter.command, /^\[ "\$CLAUDE_CODE_ENTRYPOINT" = sdk-cli \] \|\| \{ sleep "\$\{CACHE_KEEPER_DELAY_SEC:-3000\}"; /)
 })
 
-test('manifests agree with package.json', () => {
+test('--version reports package.json', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
-  const plugin = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8'))
-  const market = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/marketplace.json'), 'utf8'))
-  assert.equal(plugin.version, pkg.version)
-  assert.equal(market.plugins[0].name, plugin.name)
-  assert.equal(market.plugins[0].version, pkg.version)
   const printed = spawnSync(process.execPath, [join(ROOT, 'bin/cache-keeper.ts'), '--version'], { encoding: 'utf8' })
   assert.equal(printed.stdout.trim(), pkg.version, '--version reports the released version')
 })

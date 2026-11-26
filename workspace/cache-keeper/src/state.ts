@@ -38,13 +38,13 @@ export interface SessionState {
   gateTurnAt?: number
   /** Epoch ms of the real prompt that ended a pinged stretch; the next Stop logs `resume-paid` and clears it. */
   resumeAt?: number
-  /** Epoch ms of `/cache-keeper:done`. */
+  /** Epoch ms of `/ctx:done`. */
   doneAt?: number
   /** A fork is scored by `forked`, a turn by `record`. */
   pingTransport?: 'fork' | 'turn'
   /** Forks re-sent for the open ping after one came back with no reply. */
   forkRetries?: number
-  /** The open ping is `/cache-keeper:ping`'s: logged as `manual-ping`, never scored. */
+  /** The open ping is `/ctx:ping`'s: logged as `manual-ping`, never scored. */
   pingManual?: boolean
   /** That manual ping came from the band: no command turn follows it. */
   pingButton?: boolean

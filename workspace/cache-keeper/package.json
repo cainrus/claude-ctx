@@ -1,33 +1,27 @@
 {
-  "name": "claude-cache-keeper",
-  "version": "0.7.0",
-  "description": "Keeps an idle Claude Code session's prompt cache warm with a Stop hook — only while someone is plausibly coming back.",
+  "name": "@claude-ctx/cache-keeper",
+  "version": "0.8.0",
+  "private": true,
+  "description": "Keeps an idle Claude Code session's prompt cache warm with a Stop hook — only while someone is plausibly coming back. A package of the claude-ctx plugin.",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Sergei Tarassov <cainrus@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cainrus/claude-cache-keeper.git"
+    "url": "git+https://github.com/cainrus/claude-ctx.git",
+    "directory": "workspace/cache-keeper"
   },
-  "homepage": "https://github.com/cainrus/claude-cache-keeper#readme",
-  "bugs": "https://github.com/cainrus/claude-cache-keeper/issues",
+  "homepage": "https://github.com/cainrus/claude-ctx/tree/main/workspace/cache-keeper#readme",
+  "bugs": "https://github.com/cainrus/claude-ctx/issues",
   "engines": {
     "node": ">=22.18"
   },
   "bin": {
     "cache-keeper": "bin/cache-keeper.ts"
   },
-  "files": [
-    "bin/",
-    "src/",
-    "hooks/",
-    "commands/",
-    ".claude-plugin/",
-    "docs/",
-    "NOTICE"
-  ],
   "scripts": {
-    "test": "node --test 'test/*.test.ts'"
+    "test": "node --test 'test/*.test.ts'",
+    "docs": "node scripts/docs.ts"
   },
   "keywords": [
     "claude",

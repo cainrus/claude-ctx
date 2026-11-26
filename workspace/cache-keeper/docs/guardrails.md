@@ -28,10 +28,10 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`hooks/band.ts:145`](../hooks/band.ts#L145) a failure draws what the engine would: the band must never break a session.
 - [`hooks/gate.ts:36`](../hooks/gate.ts#L36) fail open: a timeout, a spawn failure or output that is not JSON lets the input through.
 - [`hooks/keepalive.ts:34`](../hooks/keepalive.ts#L34) once a question is answered nothing arms until its turn's turn.complete: a fork's result would re-arm inside the turn.
-- [`hooks/keepalive.ts:152`](../hooks/keepalive.ts#L152) a turn ending under a fork in flight does not claim: the fork's own result re-arms.
-- [`hooks/keepalive.ts:185`](../hooks/keepalive.ts#L185) the same test as src/commands.ts isPingCommand (the mod cannot import it). A command's turn begins with its tag (seen on Claude Code 2.1.321); anchored at the start, so a message that merely quotes it is a message.
-- [`hooks/keepalive.ts:207`](../hooks/keepalive.ts#L207) not while an answered question's turn runs: nothing arms until its turn.complete.
-- [`hooks/keepalive.ts:213`](../hooks/keepalive.ts#L213) never a second request on top of a fork that went out, even when the CLI did not record it.
+- [`hooks/keepalive.ts:160`](../hooks/keepalive.ts#L160) a turn ending under a fork in flight does not claim: the fork's own result re-arms.
+- [`hooks/keepalive.ts:193`](../hooks/keepalive.ts#L193) the same test as src/commands.ts isPingCommand (the mod cannot import it). A command's turn begins with its tag (seen on Claude Code 2.1.321); anchored at the start, so a message that merely quotes it is a message.
+- [`hooks/keepalive.ts:215`](../hooks/keepalive.ts#L215) not while an answered question's turn runs: nothing arms until its turn.complete.
+- [`hooks/keepalive.ts:221`](../hooks/keepalive.ts#L221) never a second request on top of a fork that went out, even when the CLI did not record it.
 - [`hooks/status.ts:23`](../hooks/status.ts#L23) a missing TTL reads as one hour: a wrong guess that way stays silent, the other way tells a person to pay for a re-read they did not need.
 - [`hooks/status.ts:101`](../hooks/status.ts#L101) mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
 - [`hooks/status.ts:207`](../hooks/status.ts#L207) src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
@@ -51,7 +51,7 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`hooks/gate.ts:12`](../hooks/gate.ts#L12) Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
 - [`hooks/gate.ts:67`](../hooks/gate.ts#L67) UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
 - [`hooks/keepalive.ts:18`](../hooks/keepalive.ts#L18) `$.model.fork` has no timeout of its own (anthropics/claude-code#101446).
-- [`hooks/keepalive.ts:123`](../hooks/keepalive.ts#L123) the engine does not raise a plugin's own compaction in its own hooks (measured: "skipped: re-entry"), so gate.ts never sees this one and `compacted` is reported from here.
+- [`hooks/keepalive.ts:131`](../hooks/keepalive.ts#L131) the engine does not raise a plugin's own compaction in its own hooks (measured: "skipped: re-entry"), so gate.ts never sees this one and `compacted` is reported from here.
 - [`bin/cache-keeper.sh:8`](../bin/cache-keeper.sh#L8) Claude Code brings no Node of its own (the native install is one binary) and `/plugin install` checks none, so a missing or old one would fail without a word.
 
 ## Warnings
@@ -73,6 +73,6 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/transcript.ts:269`](../src/transcript.ts#L269) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
 - [`hooks/band.ts:21`](../hooks/band.ts#L21) status.ts imports this module too. Use its functions at call time only: a const of it read while this module loads is not initialised yet.
 - [`hooks/gate.ts:42`](../hooks/gate.ts#L42) a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts) and the status line (status.ts) are called from these hooks.
-- [`hooks/keepalive.ts:58`](../hooks/keepalive.ts#L58) not awaited: it resolves only once the turn starts, which is after the calling hook returns.
+- [`hooks/keepalive.ts:66`](../hooks/keepalive.ts#L66) not awaited: it resolves only once the turn starts, which is after the calling hook returns.
 - [`hooks/status.ts:87`](../hooks/status.ts#L87) not lastRequestAt: policy reads that as Claude Code's own clock (src/state.ts). cacheAnchorAt is the status line's own, written by Stop and by a fork ping that renewed the cache.
 <!-- /gen:guardrails -->

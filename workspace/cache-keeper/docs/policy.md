@@ -2,7 +2,7 @@
 
 <!-- gen:module src/policy.ts -->
 Decides whether an idle session gets a ping now. The first matching row refuses it and names the ledger reason:
-`done` (you ran /cache-keeper:done), `away` (idle past `awaySec`), `away-budget-spent` (not at the keyboard and
+`done` (you ran /ctx:done), `away` (idle past `awaySec`), `away-budget-spent` (not at the keyboard and
 the machine-wide `maxAwayPings` spent), `context-too-small` (below `minCtxTokens`), `cache-expired` (older than
 `maxAgeSec`), `cache-still-warm` (younger than `minAgeSec`), `budget-spent` (`maxPings` used this idle stretch),
 `oracle-miss` (the previous ping missed the cache). Tune each row with its config key; `enabled: false` stops all.
@@ -42,14 +42,14 @@ The decision is kept in `$CACHE_KEEPER_HOME/tuning.json`; `cache-keeper report` 
 
 ## Commands
 
-- `/cache-keeper:done`: you will not come back to this session; no more pings or handoff until your next message
+- `/ctx:done`: you will not come back to this session; no more pings or handoff until your next message
   there. Answered by the hook, so it costs no model request.
-- `/cache-keeper:ping`: renew the cache now, outside keeper's budgets (a [fork](fork-pings.md) where the mod loads).
-- `/cache-keeper:status`:
+- `/ctx:ping`: renew the cache now, outside keeper's budgets (a [fork](fork-pings.md) where the mod loads).
+- `/ctx:status`:
 
 <!-- gen:module src/inspect.ts -->
-`/cache-keeper:status` shows what keeper knows of this session (cached till when, pings used of the cap, context
-size, whether pings go as forks, a missed ping, a mute by /cache-keeper:done, the last hook error, a compaction)
+`/ctx:status` shows what keeper knows of this session (cached till when, pings used of the cap, context
+size, whether pings go as forks, a missed ping, a mute by /ctx:done, the last hook error, a compaction)
 and every setting in force with where it came from: `env`, `config.json`, `tuned` (the cap) or `default`.
 It warns about settings that leave keeper unable to ping at all. The hook answers it: no model request is made.
 <!-- /gen:module -->

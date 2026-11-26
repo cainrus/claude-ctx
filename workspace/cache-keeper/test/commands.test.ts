@@ -368,7 +368,7 @@ test('loop: pings every ~50 min while hits keep landing, stops at the per-stretc
   assert.equal(readLedger(home).at(-1)?.reason, 'budget-spent')
 })
 
-// --- /cache-keeper:done -------------------------------------------------------
+// --- /ctx:done -------------------------------------------------------
 
 test('done: blocks the command, mutes the session and keeps the stretch open', () => {
   const { home, config } = setup()
@@ -386,7 +386,7 @@ test('done: blocks the command, mutes the session and keeps the stretch open', (
 
 test('done: the next wake is refused with reason done, and no handoff is asked', () => {
   const { home, config } = setup({ CACHE_KEEPER_HANDOFF: '1', CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS: '1' })
-  touch({ session_id: SID, prompt: '/cache-keeper:done' }, makeCtx(config, T0 + MIN))
+  touch({ session_id: SID, prompt: '/ctx:done' }, makeCtx(config, T0 + MIN))
   const ctx = makeCtx(config, T0 + WARM_ENOUGH, T.awaySec + 1)
   assert.equal(wake({ session_id: SID }, ctx), 0)
   assert.deepEqual(ctx.errors, [])
@@ -403,12 +403,12 @@ test('done: a real prompt lifts it', () => {
 })
 
 test('done: only the namespaced command matches', () => {
-  assert.ok(isDoneCommand('/cache-keeper:done'))
-  assert.ok(isDoneCommand('  /cache-keeper:done  '))
-  assert.ok(isDoneCommand('/cache-keeper:done for today'))
+  assert.ok(isDoneCommand('/ctx:done'))
+  assert.ok(isDoneCommand('  /ctx:done  '))
+  assert.ok(isDoneCommand('/ctx:done for today'))
   assert.ok(!isDoneCommand('/done'))
-  assert.ok(!isDoneCommand('/cache-keeper:doneish'))
-  assert.ok(!isDoneCommand('please run /cache-keeper:done'))
+  assert.ok(!isDoneCommand('/ctx:doneish'))
+  assert.ok(!isDoneCommand('please run /ctx:done'))
 })
 
 // --- cache bucket, request start, first-turn price ---------------------------------

@@ -52,16 +52,16 @@ test('the commands are recognised by the typed line; ping also by its file body'
   assert.ok(!isStatusCommand(`please run ${STATUS_COMMAND}`))
   assert.ok(isPingCommand(PING_COMMAND))
   assert.ok(isPingCommand(`${PING_MARKER} Prompt-cache keep-alive.`))
-  assert.ok(!isPingCommand('/cache-keeper:pinged'))
+  assert.ok(!isPingCommand('/ctx:pinged'))
 })
 
 test("the mod's copy of the ping matcher agrees with the CLI's", () => {
-  for (const text of [PING_COMMAND, `${PING_COMMAND} now`, `x ${PING_MARKER} y`, '/cache-keeper:pinged', 'hello', `say ${PING_COMMAND}`]) {
+  for (const text of [PING_COMMAND, `${PING_COMMAND} now`, `x ${PING_MARKER} y`, '/ctx:pinged', 'hello', `say ${PING_COMMAND}`]) {
     assert.equal(isPingTurn(text), isPingCommand(text), text)
   }
 })
 
-// --- /cache-keeper:status --------------------------------------------------------
+// --- /ctx:status --------------------------------------------------------
 
 test('status: blocked with a report, the idle stretch untouched', () => {
   const { home, config } = setup()
@@ -94,7 +94,7 @@ test('status: muted, a missed ping and a small context are named', () => {
   const { home, config } = setup()
   saveSession(home, { ...loadSession(home, SID)!, doneAt: T0 + MIN, lastPingHit: false, ctxTokens: 5_000 })
   const report = statusReport(loadSession(home, SID), config, {}, T0 + 2 * MIN)
-  assert.match(report, /muted: by \/cache-keeper:done/)
+  assert.match(report, /muted: by \/ctx:done/)
   assert.match(report, /last ping: miss/)
   assert.match(report, /under minCtxTokens/)
 })
@@ -157,7 +157,7 @@ test('a stale manual flag never turns the next automatic wake into a manual ping
   assert.deepEqual(readLedger(home).filter((e) => e.event === 'manual-ping'), [])
 })
 
-// --- /cache-keeper:ping ----------------------------------------------------------
+// --- /ctx:ping ----------------------------------------------------------
 
 test('ping: the prompt hook lets it through and changes nothing', () => {
   const { home, config } = setup()
@@ -394,10 +394,10 @@ test('report: manual pings cost, but are neither sent pings nor hits', () => {
 })
 
 test('the html tag a command turn begins with is a ping', () => {
-  const tag = '<command-message>cache-keeper:ping</command-message>\n<command-name>/cache-keeper:ping</command-name>'
+  const tag = '<command-message>ctx:ping</command-message>\n<command-name>/ctx:ping</command-name>'
   assert.ok(isPingCommand(tag))
   assert.ok(isPingTurn(tag))
-  assert.ok(!isPingTurn('<command-name>/cache-keeper:status</command-name>'))
+  assert.ok(!isPingTurn('<command-name>/ctx:status</command-name>'))
 })
 
 test('a mark left by a manual ping that never got its Stop does not swallow the next real turn', () => {

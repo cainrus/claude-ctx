@@ -34,7 +34,7 @@ model without the `UserPromptSubmit` hook, so they would hit a cold cache with
 no menu. The gate asks keeper at the first model request of such a turn and
 before a manual `/compact`, and stops the input just as a typed prompt would be
 stopped: the menu when a handoff brief waits on a cold cache (`handoff.enabled`),
-or keeper's own answer to `/cache-keeper:status`. It runs where Claude Code
+or keeper's own answer to `/ctx:status`. It runs where Claude Code
 loads the plugin's mod; any failure lets the input through.
 <!-- /gen:module -->
 

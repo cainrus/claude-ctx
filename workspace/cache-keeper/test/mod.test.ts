@@ -1,5 +1,5 @@
 /**
- * The mod's `/cache-keeper:ping` path end to end: hooks/gate.ts's turn.step
+ * The mod's `/ctx:ping` path end to end: hooks/gate.ts's turn.step
  * hands the turn to hooks/keepalive.ts `manualPing`, which runs the real CLI
  * (`ping-now`, then `forked`) against a temporary keeper home. Only the
  * engine is faked: `$.model.fork` answers what each test says.
@@ -10,17 +10,15 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { record } from '../src/commands.ts'
 import { readLedger } from '../src/ledger.ts'
 import { loadSession } from '../src/state.ts'
 import { register } from '../hooks/gate.ts'
 import { manualPing } from '../hooks/keepalive.ts'
 import { refresh } from '../hooks/status.ts'
-import { configFor, makeCtx, MIN, SID, tempHome, writeTranscript } from './helpers.ts'
+import { configFor, makeCtx, MIN, PLUGIN_ROOT, SID, tempHome, writeTranscript } from './helpers.ts'
 
-const ROOT = fileURLToPath(new URL('..', import.meta.url))
-const TAG = '<command-message>cache-keeper:ping</command-message>\n<command-name>/cache-keeper:ping</command-name>'
+const TAG = '<command-message>ctx:ping</command-message>\n<command-name>/ctx:ping</command-name>'
 
 /** The CLI's env: this test's home, none of the runner's own keeper settings. */
 function cliEnv(home: string, extra: Record<string, string>): NodeJS.ProcessEnv {
@@ -34,7 +32,7 @@ type ForkReply = { isAnswered: boolean; usage?: Record<string, number>; reason?:
 function fakeEngine(home: string, forkReply: ForkReply | (() => never), env: Record<string, string> = {}) {
   const calls: string[] = []
   const $ = {
-    plugin: { root: ROOT },
+    plugin: { root: PLUGIN_ROOT },
     session: { id: async () => SID },
     process: {
       run: async (argv: string[], opts: { stdin: string }) => {
@@ -195,7 +193,7 @@ async function runStep(hooks: Record<string, Handler>, $: unknown, text: string)
   return { yielded, result: r.value, modelCalled }
 }
 
-test("gate: /cache-keeper:ping's turn is answered by the fork, no model request", async () => {
+test("gate: /ctx:ping's turn is answered by the fork, no model request", async () => {
   const { home } = session()
   const { $ } = fakeEngine(home, HIT)
   const { yielded, result, modelCalled } = await runStep(hooksOf(), $, TAG)

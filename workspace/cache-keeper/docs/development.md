@@ -13,11 +13,11 @@ written by hand there but rendered between `<!-- gen:NAME -->` markers by `scrip
 
 | block | source |
 |---|---|
-| `settings`, `handoff-settings` | `SETTINGS` in `src/config.ts`; defaults are what `/cache-keeper:status` reports on an empty config |
+| `settings`, `handoff-settings` | `SETTINGS` in `src/config.ts`; defaults are what `/ctx:status` reports on an empty config |
 | `status-lines` | `STATUS_EXAMPLES` in `hooks/status.ts`, printed by the real `format()` |
 | `ledger-events` | `LEDGER_EVENTS` in `src/ledger.ts`, the table the event type is derived from |
 
-`test/docs.test.ts` fails when a generated block is stale, when a setting `/cache-keeper:status` reports is missing
+`test/docs.test.ts` fails when a generated block is stale, when a setting `/ctx:status` reports is missing
 from `SETTINGS` (or the other way round), and when a documented env variable does not drive its key. So a new
 setting or event goes into the code's own table first, and the docs follow from `node scripts/docs.ts`.
 

@@ -1,20 +1,20 @@
 {
-  "name": "claude-cache-keeper",
+  "name": "claude-ctx",
   "owner": {
     "name": "Sergei Tarassov",
     "url": "https://github.com/cainrus"
   },
   "metadata": {
-    "description": "Prompt-cache keep-alive for idle Claude Code sessions."
+    "description": "Session context for Claude Code: prompt-cache keep-alive and a status line from the engine's figures."
   },
   "plugins": [
     {
-      "name": "cache-keeper",
+      "name": "ctx",
       "source": "./",
-      "description": "Keeps the prompt cache of an idle session warm via a Stop hook with asyncRewake, gated by presence, cache age and per-session and machine-wide budgets.",
-      "version": "0.7.0",
+      "description": "Keeps an idle session's prompt cache warm (Stop hook with asyncRewake or fork pings, gated by presence, cache age and budgets) and draws the status line from the engine's context, rate-limit and cost figures.",
+      "version": "0.8.0",
       "category": "productivity",
-      "keywords": ["prompt-cache", "keep-alive", "hooks", "cost"]
+      "keywords": ["prompt-cache", "keep-alive", "status-line", "hooks", "cost"]
     }
   ]
 }

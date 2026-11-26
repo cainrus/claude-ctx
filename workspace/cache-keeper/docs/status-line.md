@@ -21,7 +21,7 @@ Every form it takes, printed by the real `format()`:
 - `○ cold · next $0.98`: the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now.
 - `○ cold · next $0.98 ⇄$0.30`: the same, and a new session would pay $0.30 for its first turn (its start prompt, written anew): the floor of a handoff, shown only when it is cheaper.
 - `error: needs Node.js ≥ 22.18`: `node` on `PATH` is missing or too old to run the hooks, so keeper does nothing.
-- `error: record failed · ~/.claude-cache-keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/cache-keeper:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
+- `error: record failed · ~/.claude-cache-keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/ctx:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
 - `(nothing)`: keeper is off, or `"statusLine": false`.
 <!-- /gen:status-lines -->
 
@@ -45,9 +45,9 @@ errors only:
   `final` in place of the button when no ping is coming. The time turns yellow in
   the last 10 minutes (half the TTL on a 5-minute cache); the cold line is green:
   switching model costs nothing extra now. The status line has no colour.
-- `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
+- `↻3`: press to ping now, as `/ctx:ping` does (a fork, no turn);
   3 pings are left. Dim while a turn runs.
-- `✓`: press to stop keeping this session, as `/cache-keeper:done` does;
+- `✓`: press to stop keeping this session, as `/ctx:done` does;
   `✓ done` once it is.
 - `?`: press to pin the legend; hovering the row shows it too.
 

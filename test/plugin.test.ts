@@ -1,8 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { tempHome } from './helpers.ts'
+
+const tempHome = (): string => mkdtempSync(join(tmpdir(), 'claude-ctx-test-'))
 
 /**
  * Claude Code's own validator over the plugin and the marketplace manifest:
@@ -21,7 +25,7 @@ function claude(args: string[]) {
 
 const available = claude(['--version']).status === 0
 // The CI job that installs Claude Code sets this, so a broken install fails instead of skipping.
-const required = process.env.CACHE_KEEPER_REQUIRE_CLAUDE === '1'
+const required = process.env.CTX_REQUIRE_CLAUDE === '1'
 const skip = available || required ? false : `no Claude Code binary (${CLAUDE}); set CLAUDE_BIN to run it`
 
 test('a Claude Code binary is there when the run requires one', { skip: !required }, () => {

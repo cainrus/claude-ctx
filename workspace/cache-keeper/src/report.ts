@@ -19,7 +19,7 @@ export interface Summary {
   misses: number
   /** Pings whose wake turn was never scored (session ended, wake did not land). */
   unscored: number
-  /** `/cache-keeper:ping`s: not scored, but their cost is in `pingCostUsd`. */
+  /** `/ctx:ping`s: not scored, but their cost is in `pingCostUsd`. */
   manualPings: number
   /** Idle stretches that had >= 1 ping and ended with a real prompt. */
   resumedAfterPing: number

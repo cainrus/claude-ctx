@@ -3,7 +3,7 @@
  * by forking the main thread's last request with one short question. The API
  * reads the prefix from the cache and renews it, and nothing lands in the
  * transcript. The timer is armed at each turn's end, on session start and while
- * AskUserQuestion waits for an answer; `/cache-keeper:ping` sends one now. Every
+ * AskUserQuestion waits for an answer; `/ctx:ping` sends one now. Every
  * decision is keeper's, as for the Stop hook's wake turns, and a step that fails
  * sends nothing. `"forkPings": false` in config.json pings with wake turns instead.
  */
@@ -35,11 +35,19 @@ let forking = false
 let answered = false
 let compactAfterTurn: { instructions?: string; at: number } | undefined
 
+/** This package's place under the plugin root: claude-ctx assembles one plugin from the packages in workspace/. */
+export const PACKAGE_DIR = 'workspace/cache-keeper'
+
+/** The argv that runs keeper's CLI command `cmd` from the plugin's mod. */
+export function cliArgv($: $, cmd: string): string[] {
+  return ['node', '--disable-warning=ExperimentalWarning', `${$.plugin.root}/${PACKAGE_DIR}/bin/cache-keeper.ts`, cmd]
+}
+
 async function cli($: $, cmd: string, payload: Record<string, unknown> = {}): Promise<Answer | undefined> {
   try {
     const sessionId = await $.session.id()
     const { exitCode, stdout } = await $.process.run(
-      ['node', '--disable-warning=ExperimentalWarning', `${$.plugin.root}/bin/cache-keeper.ts`, cmd],
+      cliArgv($, cmd),
       { stdin: JSON.stringify({ session_id: sessionId, ...payload }), timeoutMs: CLI_TIMEOUT_MS },
     )
     const line = exitCode === 0 ? stdout.trim().split('\n').pop() : undefined
@@ -176,7 +184,7 @@ export async function keepaliveWaitEnd($: $): Promise<void> {
   await cli($, 'wait-end')
 }
 
-const PING_COMMAND = '/cache-keeper:ping'
+const PING_COMMAND = '/ctx:ping'
 const PING_MARKER = '[cache-keeper:ping]'
 
 export function isPingTurn(text: string): boolean {
@@ -187,7 +195,7 @@ export function isPingTurn(text: string): boolean {
   return t.startsWith(PING_MARKER) || (t.startsWith('<command-') && t.includes(`<command-name>${PING_COMMAND}</command-name>`))
 }
 
-/** The text that answers `/cache-keeper:ping`'s turn, or undefined to let it reach the model as a wake turn. */
+/** The text that answers `/ctx:ping`'s turn, or undefined to let it reach the model as a wake turn. */
 export async function manualPing($: $, button = false): Promise<string | undefined> {
   const a = await cli($, 'ping-now', button ? { button } : {})
   if (a === undefined && button && !answered) schedule($, BUTTON_PING_STALE_SEC)

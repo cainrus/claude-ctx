@@ -75,7 +75,7 @@ export const SETTINGS: readonly SettingDoc[] = Object.freeze([
   { key: 'statusLine', meaning: 'show the cache line under the prompt (see [Status line](status-line.md)); only `false` turns it off' },
   { key: 'band', meaning: 'draw that line above the prompt with buttons instead, where the mod loads (see [The band](status-line.md#the-band-the-same-line-clickable)); `false` keeps it plain text' },
   { key: 'forkPings', env: 'CACHE_KEEPER_FORK', meaning: 'ping with a fork instead of a wake turn where the plugin\'s mod loads (see [Fork pings](fork-pings.md))' },
-  { key: 'cacheTtlSec', meaning: 'the cache TTL `/cache-keeper:status`, `/cache-keeper:ping`, the report and the ping timing assume; the status line uses the bucket the last turn really wrote and falls back to this; change it only if yours is not one hour' },
+  { key: 'cacheTtlSec', meaning: 'the cache TTL `/ctx:status`, `/ctx:ping`, the report and the ping timing assume; the status line uses the bucket the last turn really wrote and falls back to this; change it only if yours is not one hour' },
   { key: 'handoff.enabled', env: 'CACHE_KEEPER_HANDOFF', meaning: 'write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](handoff.md))' },
   { key: 'handoff.minCtxTokens', env: 'CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS', meaning: 'below this a brief saves too little' },
   { key: 'handoff.spawnCommand', env: 'CACHE_KEEPER_HANDOFF_SPAWN', meaning: 'shell command starting a new session; gets `CACHE_KEEPER_BRIEF`, `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_TRANSCRIPT_PATH`, `CACHE_KEEPER_CWD`; 45 s at most' },

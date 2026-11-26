@@ -6,6 +6,8 @@ import type { Ctx } from '../src/commands.ts'
 import { loadConfig, type Config } from '../src/config.ts'
 
 export const FIXTURES = fileURLToPath(new URL('./fixtures/', import.meta.url))
+/** The claude-ctx plugin root: `${CLAUDE_PLUGIN_ROOT}` and `$.plugin.root` name it, this package sits at workspace/cache-keeper under it. */
+export const PLUGIN_ROOT = fileURLToPath(new URL('../../../', import.meta.url))
 export const SID = '00000000-0000-4000-8000-00000000abcd'
 export const MIN = 60_000
 

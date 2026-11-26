@@ -4,15 +4,16 @@ Requires Node **≥ 22.18** on `PATH` (on the 23 line, 23.6+) and a POSIX shell;
 
 ```sh
 node --version   # v22.18.0 or later
-claude plugin marketplace add cainrus/claude-cache-keeper
-claude plugin install cache-keeper@claude-cache-keeper
+claude plugin marketplace add cainrus/claude-ctx
+claude plugin install ctx@claude-ctx
 ```
 
-New sessions, background and agent-view ones included, pick it up. Without the plugin system:
+Keeper ships inside the `ctx` plugin, beside the status line. New sessions, background and agent-view ones
+included, pick it up. Without the plugin system (keeper alone, no mod):
 
 ```sh
-git clone https://github.com/cainrus/claude-cache-keeper.git
-node claude-cache-keeper/bin/cache-keeper.ts install-snippet   # prints a hooks block for ~/.claude/settings.json
+git clone https://github.com/cainrus/claude-ctx.git
+node claude-ctx/workspace/cache-keeper/bin/cache-keeper.ts install-snippet   # prints a hooks block for ~/.claude/settings.json
 ```
 
 ## No Node, or an old one

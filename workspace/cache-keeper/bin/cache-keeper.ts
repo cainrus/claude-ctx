@@ -15,7 +15,7 @@ import { formatReport, summarize } from '../src/report.ts'
 import { loadTuning } from '../src/tune.ts'
 import { runSkipIf } from '../src/veto.ts'
 
-const VERSION = '0.7.0'
+const VERSION = '0.8.0'
 
 const USAGE = `cache-keeper ${VERSION} — keep an idle Claude Code session's prompt cache warm
 
@@ -24,7 +24,7 @@ Hook subcommands (read the hook input JSON on stdin):
   wake              Stop, after the sleep (asyncRewake): exit 2 = ping, 0 = no ping
   touch             UserPromptSubmit: a real prompt closes the idle stretch;
                     into a cold cache with a handoff brief, it asks first.
-                    Answers /cache-keeper:done and /cache-keeper:status itself
+                    Answers /ctx:done and /ctx:status itself
   end               SessionEnd: forget the session
   gate              called by the plugin's mod (hooks/gate.ts) before a "!" command, a slash
                     command or a compaction reaches the model; same menu as touch
@@ -44,7 +44,7 @@ Other:
   --help, --version
 
 State lives in $CACHE_KEEPER_HOME (default ~/.claude-cache-keeper).
-Design: https://github.com/cainrus/claude-cache-keeper/blob/main/docs/DESIGN.md`
+Design: https://github.com/cainrus/claude-ctx/blob/main/workspace/cache-keeper/docs/DESIGN.md`
 
 function readStdin(): string {
   if (process.stdin.isTTY) return ''

@@ -1,7 +1,13 @@
-# claude-cache-keeper: how code and docs are written here
+# claude-ctx: how code and docs are written here
 
-The docs are built from the code (`node scripts/docs.ts`; `test/docs.test.ts` fails when they are stale).
-So write code text as if it were already a docs line: short, for a human and a model alike.
+A monorepo: the plugin `ctx` at the root is assembled from the packages in `workspace/*`. The root holds only the
+manifests, `hooks/hooks.json` (built by `node scripts/hooks.ts`) and `hooks/ctx.ts`, the one hooks module that
+registers each package's hooks. A package owns its events, settings, state and docs; the plugin installs from git
+with no `npm install`, so the root reaches a package by relative path only, never through `node_modules`.
+
+A package's docs are built from its code (cache-keeper: `node workspace/cache-keeper/scripts/docs.ts`; its
+`test/docs.test.ts` fails when they are stale). So write code text as if it were already a docs line: short, for a
+human and a model alike.
 
 ## Where text lives
 

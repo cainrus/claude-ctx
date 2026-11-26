@@ -7,9 +7,9 @@
  *   `final` in place of the button when no ping is coming. The time turns yellow in
  *   the last 10 minutes (half the TTL on a 5-minute cache); the cold line is green:
  *   switching model costs nothing extra now. The status line has no colour.
- * - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
+ * - `↻3`: press to ping now, as `/ctx:ping` does (a fork, no turn);
  *   3 pings are left. Dim while a turn runs.
- * - `✓`: press to stop keeping this session, as `/cache-keeper:done` does;
+ * - `✓`: press to stop keeping this session, as `/ctx:done` does;
  *   `✓ done` once it is.
  * - `?`: press to pin the legend; hovering the row shows it too.
  *
@@ -23,13 +23,13 @@ import type { EngineInterface as $ } from 'claude-code'
 // @ts-ignore TS5097
 import { costText, format, type Line, timeText } from './status.ts'
 // @ts-ignore TS5097
-import { manualPing } from './keepalive.ts'
+import { cliArgv, manualPing } from './keepalive.ts'
 
 export interface BandView {
   line: Line
   /** getTimezoneOffset() at the time shown. */
   offsetMin: number
-  /** Muted by `/cache-keeper:done`: ✓ shows as done, not as a button. */
+  /** Muted by `/ctx:done`: ✓ shows as done, not as a button. */
   muted: boolean
 }
 
@@ -84,19 +84,19 @@ export function setBand($: $, next: BandView | undefined): void {
 
 const CLI_TIMEOUT_MS = 20_000
 
-/** `/cache-keeper:done` as the prompt hook answers it: the same CLI, the same record. */
+/** `/ctx:done` as the prompt hook answers it: the same CLI, the same record. */
 async function markDone($: $): Promise<string> {
   try {
     const { exitCode, stdout } = await $.process.run(
-      ['node', '--disable-warning=ExperimentalWarning', `${$.plugin.root}/bin/cache-keeper.ts`, 'touch'],
-      { stdin: JSON.stringify({ session_id: await $.session.id(), prompt: '/cache-keeper:done' }), timeoutMs: CLI_TIMEOUT_MS },
+      cliArgv($, 'touch'),
+      { stdin: JSON.stringify({ session_id: await $.session.id(), prompt: '/ctx:done' }), timeoutMs: CLI_TIMEOUT_MS },
     )
     const out = exitCode === 0 ? JSON.parse(stdout.trim().split('\n').pop() ?? '') : undefined
     if (out?.decision === 'block' && typeof out.reason === 'string') return out.reason
   } catch {
     // Fall through: say it did not take.
   }
-  return 'cache-keeper: could not mark this session done; /cache-keeper:done does the same.'
+  return 'cache-keeper: could not mark this session done; /ctx:done does the same.'
 }
 
 async function press($: $, key: 'ping' | 'done', refresh: () => Promise<void>): Promise<void> {

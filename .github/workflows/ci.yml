@@ -25,11 +25,12 @@ jobs:
       - name: Node version
         run: node --version
       - name: Syntax check
-        run: for f in bin/*.ts src/*.ts; do node --check "$f"; done
+        run: for f in workspace/*/bin/*.ts workspace/*/src/*.ts scripts/*.ts; do [ -e "$f" ] && node --check "$f"; done
       - name: Smoke
         run: |
-          node bin/cache-keeper.ts --help
-          node bin/cache-keeper.ts install-snippet > /dev/null
+          node workspace/cache-keeper/bin/cache-keeper.ts --help
+          node workspace/cache-keeper/bin/cache-keeper.ts install-snippet > /dev/null
+          node scripts/hooks.ts --check
       - name: Test
         run: npm test
 
@@ -49,5 +50,5 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@${{ matrix.claude }}
       - name: Validate
         env:
-          CACHE_KEEPER_REQUIRE_CLAUDE: '1'
+          CTX_REQUIRE_CLAUDE: '1'
         run: node --test test/plugin.test.ts

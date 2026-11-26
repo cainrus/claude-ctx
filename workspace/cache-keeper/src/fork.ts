@@ -3,7 +3,7 @@
  * A fork re-sends the last request with one short question, so the cache is read and renewed while nothing
  * is added to the transcript. The policy, budgets and report are the same as for wake turns. A fork that
  * fails is sent again, then falls back to a wake turn while the cache can still be reached warm. Forks also
- * hold the cache while a question (AskUserQuestion) waits for your answer, and `/cache-keeper:ping` uses one.
+ * hold the cache while a question (AskUserQuestion) waits for your answer, and `/ctx:ping` uses one.
  * Without the mod (an older Claude Code, mods off) pings are wake turns as before.
  * Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
  */
@@ -270,7 +270,7 @@ export function forked(input: ForkInput, ctx: Ctx): number {
   return answer(ctx, { action: 'none', dueInSec: delaySec })
 }
 
-/** What `/cache-keeper:ping` answers once its fork came back. */
+/** What `/ctx:ping` answers once its fork came back. */
 export function manualPingText(u: { cacheRead: number; cacheWrite: number }, warmUntil: number): string {
   if (u.cacheRead === 0) {
     return `cache-keeper: pinged, but nothing was read from the cache: it had gone cold. ${groupedTokens(u.cacheWrite)} tokens written, cached till ${hhmm(warmUntil)}.`
@@ -278,7 +278,7 @@ export function manualPingText(u: { cacheRead: number; cacheWrite: number }, war
   return `cache-keeper: pinged. Read ${groupedTokens(u.cacheRead)} cached tokens, wrote ${groupedTokens(u.cacheWrite)}; cached till ${hhmm(warmUntil)}.`
 }
 
-/** `/cache-keeper:ping` reached the mod: a fork, a refusal, or `pass` (forks off: the command's own turn is the ping). */
+/** `/ctx:ping` reached the mod: a fork, a refusal, or `pass` (forks off: the command's own turn is the ping). */
 export function pingNow(input: ForkInput, ctx: Ctx): number {
   const sid = input.session_id
   const { home, enabled, forkPings, cacheTtlSec } = ctx.config
@@ -299,7 +299,7 @@ export function pingNow(input: ForkInput, ctx: Ctx): number {
   if (ctx.now >= warmUntil) return refuse(NOTHING_TO_HOLD.expired(warmUntil))
   if (compactedSinceRequest(state)) return refuse(NOTHING_TO_HOLD.compacted)
   if (pingInFlight(state, ctx.now)) return refuse('a ping is already on its way')
-  if (button && !forkPings) return refuse('the band pings by fork, and forks are off: /cache-keeper:ping sends a turn')
+  if (button && !forkPings) return refuse('the band pings by fork, and forks are off: /ctx:ping sends a turn')
   state.pendingPing = true
   state.pingTransport = forkPings ? 'fork' : 'turn'
   state.pingManual = true

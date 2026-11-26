@@ -5,7 +5,7 @@ Fork pings: where the plugin's mod loads, keeper pings with a fork of the main t
 A fork re-sends the last request with one short question, so the cache is read and renewed while nothing
 is added to the transcript. The policy, budgets and report are the same as for wake turns. A fork that
 fails is sent again, then falls back to a wake turn while the cache can still be reached warm. Forks also
-hold the cache while a question (AskUserQuestion) waits for your answer, and `/cache-keeper:ping` uses one.
+hold the cache while a question (AskUserQuestion) waits for your answer, and `/ctx:ping` uses one.
 Without the mod (an older Claude Code, mods off) pings are wake turns as before.
 Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
 <!-- /gen:module -->

@@ -1,6 +1,6 @@
 /**
  * Decides whether an idle session gets a ping now. The first matching row refuses it and names the ledger reason:
- * `done` (you ran /cache-keeper:done), `away` (idle past `awaySec`), `away-budget-spent` (not at the keyboard and
+ * `done` (you ran /ctx:done), `away` (idle past `awaySec`), `away-budget-spent` (not at the keyboard and
  * the machine-wide `maxAwayPings` spent), `context-too-small` (below `minCtxTokens`), `cache-expired` (older than
  * `maxAgeSec`), `cache-still-warm` (younger than `minAgeSec`), `budget-spent` (`maxPings` used this idle stretch),
  * `oracle-miss` (the previous ping missed the cache). Tune each row with its config key; `enabled: false` stops all.
@@ -45,7 +45,7 @@ export interface PolicyInput {
   awayPingsSincePresence: number
   /** Did the previous ping read the cache (true) or rewrite it (false)? null = no ping yet. */
   lastPingHit: boolean | null
-  /** Set by `/cache-keeper:done`; cleared by the next real prompt. */
+  /** Set by `/ctx:done`; cleared by the next real prompt. */
   muted?: boolean
 }
 
