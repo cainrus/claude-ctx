@@ -18,13 +18,13 @@ export interface TurnUsage {
 
 export interface MainTurn {
   usage?: TurnUsage
-  /** Epoch ms of the latest request start written before `usage` in the file (a prompt written after it is not its request); with no `usage`, the newest start. */
+  /** Epoch ms of the latest request start written before the first assistant line of the `usage` request (a prompt written after it, or inside it, is not its start); with no `usage`, the newest start; absent when the search hit the cap. */
   requestStart?: number
-  /** The bucket of the newest request at or after the turn's start that wrote one. */
+  /** The bucket of the newest request at or after the turn's start that wrote one; with no `sinceMs`, that of `usage` alone. */
   ttlSec?: 300 | 3600
 }
 
-/** Most `lastMainTurn` and `firstMainUsage` read: past this a transcript line is not worth the Stop hook's time. */
+/** Most `lastMainTurn` reads past the newest usage, and `firstMainUsage` reads in all: past this a transcript line is not worth the Stop hook's time. */
 export const MAX_SCAN_BYTES = 16 * 1024 * 1024
 
 const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
@@ -40,6 +40,11 @@ export function ttlOfUsage(u: any): 300 | 3600 | undefined {
 
 /** Undefined unless the line is a main-thread assistant turn with usage. */
 export function usageFromLine(line: string): TurnUsage | undefined {
+  return usageEntryFromLine(line)?.usage
+}
+
+/** `request`: what the assistant lines of one request share (`message.id`, else `requestId`); one line is written per content block. */
+function usageEntryFromLine(line: string): { usage: TurnUsage; request?: string } | undefined {
   if (!line.includes('"usage"')) return undefined
   let rec: any
   try {
@@ -61,15 +66,19 @@ export function usageFromLine(line: string): TurnUsage | undefined {
   if (inputTokens + cacheRead + cacheWrite === 0) return undefined
   const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
   const ttlSec = ttlOfUsage(u)
+  const request = typeof msg.id === 'string' ? msg.id : typeof rec.requestId === 'string' ? rec.requestId : undefined
   return {
-    inputTokens,
-    cacheRead,
-    cacheWrite,
-    outputTokens: n(u.output_tokens),
-    ctxTokens: inputTokens + cacheRead + cacheWrite,
-    ...(typeof msg.model === 'string' ? { model: msg.model } : {}),
-    ...(Number.isFinite(ts) ? { timestamp: ts } : {}),
-    ...(ttlSec !== undefined ? { ttlSec } : {}),
+    usage: {
+      inputTokens,
+      cacheRead,
+      cacheWrite,
+      outputTokens: n(u.output_tokens),
+      ctxTokens: inputTokens + cacheRead + cacheWrite,
+      ...(typeof msg.model === 'string' ? { model: msg.model } : {}),
+      ...(Number.isFinite(ts) ? { timestamp: ts } : {}),
+      ...(ttlSec !== undefined ? { ttlSec } : {}),
+    },
+    request,
   }
 }
 
@@ -105,9 +114,7 @@ export function requestStartFromLine(line: string): number | undefined {
   return Number.isFinite(ts) ? ts : undefined
 }
 
-/** `maxBytes` bounds the scan; the readers that existed before it was added pass none and read as far as they need. */
-function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean, maxBytes = Infinity): void {
-  let scanned = 0
+function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean): void {
   let fd: number
   try {
     fd = openSync(transcriptPath, 'r')
@@ -118,7 +125,7 @@ function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit:
     let end = fstatSync(fd).size
     let chunk = Math.max(1024, initialChunk)
     for (;;) {
-      const start = Math.max(0, end - Math.min(chunk, maxBytes - scanned))
+      const start = Math.max(0, end - chunk)
       const buf = Buffer.alloc(end - start)
       readSync(fd, buf, 0, buf.length, start)
       const lines = buf.toString('utf8').split('\n')
@@ -126,8 +133,7 @@ function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit:
       for (let i = lines.length - 1; i >= from; i--) {
         if (visit(lines[i])) return
       }
-      scanned += buf.length
-      if (start === 0 || scanned >= maxBytes) return
+      if (start === 0) return
       const firstBreak = buf.indexOf(0x0a)
       end = start + (firstBreak < 0 ? buf.length : firstBreak)
       chunk *= 4
@@ -149,26 +155,63 @@ function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: 
 /** The last main-thread usage, when its request started and which bucket the turn (from `sinceMs`) wrote, in one backward pass. */
 export function lastMainTurn(transcriptPath: string, initialChunk = 256 * 1024, sinceMs = 0): MainTurn {
   const turn: MainTurn = {}
-  // The request start is the latest qualifying user line that comes BEFORE the final answer in FILE ORDER, never by comparing
-  // timestamps: a prompt typed while the answer streams is stamped earlier than it but written after it, and is not its request.
+  // The request start is the latest qualifying user line BEFORE the first assistant line of the final request, in FILE ORDER,
+  // never by comparing timestamps: a prompt typed while the answer streams is stamped earlier than it but written after it
+  // (or between its lines, one per content block), and is not its request.
   let newest: number | undefined
-  let turnOver = false
+  let request: string | undefined
+  let pending: number | undefined
+  let startFound = false
+  let bucketOpen = false
+  let after = 0
+  let capped = false
   scanLinesBackwards(transcriptPath, initialChunk, (line) => {
-    const u = usageFromLine(line)
-    if (u) {
-      turn.usage ??= u
-      if (u.timestamp !== undefined && u.timestamp < sinceMs) turnOver = true
-      else if (!turnOver) turn.ttlSec ??= u.ttlSec
-    } else if (turn.requestStart === undefined) {
-      const s = requestStartFromLine(line)
-      if (s !== undefined) {
-        if (turn.usage === undefined) newest ??= s
-        else turn.requestStart = s
+    const entry = usageEntryFromLine(line)
+    if (turn.usage === undefined) {
+      // The newest usage is searched without a cap, as `lastMainUsage` always did.
+      if (!entry) {
+        const s = requestStartFromLine(line)
+        if (s !== undefined) newest ??= s
+        return false
       }
+      turn.usage = entry.usage
+      request = entry.request
+      const over = entry.usage.timestamp !== undefined && entry.usage.timestamp < sinceMs
+      if (!over) turn.ttlSec = entry.usage.ttlSec
+      bucketOpen = !over && sinceMs > 0 && turn.ttlSec === undefined
+      return false
     }
-    return turn.usage !== undefined && turn.requestStart !== undefined && (turn.ttlSec !== undefined || turnOver)
-  }, MAX_SCAN_BYTES)
-  if (turn.usage === undefined && newest !== undefined) turn.requestStart = newest
+    after += line.length + 1
+    if (after > MAX_SCAN_BYTES) {
+      capped = true
+      return true
+    }
+    if (entry) {
+      if (bucketOpen) {
+        if (entry.usage.timestamp !== undefined && entry.usage.timestamp < sinceMs) bucketOpen = false
+        else if (entry.usage.ttlSec !== undefined) {
+          turn.ttlSec = entry.usage.ttlSec
+          bucketOpen = false
+        }
+      }
+      if (!startFound) {
+        // A keyless request is a run of assistant lines with no prompt between them.
+        const sameRequest = entry.request === request && (request !== undefined || pending === undefined)
+        if (sameRequest) pending = undefined
+        else if (pending !== undefined) {
+          turn.requestStart = pending
+          startFound = true
+        }
+      }
+    } else if (!startFound) {
+      const s = requestStartFromLine(line)
+      if (s !== undefined) pending ??= s
+    }
+    return startFound && !bucketOpen
+  })
+  if (turn.usage === undefined) {
+    if (newest !== undefined) turn.requestStart = newest
+  } else if (!startFound && !capped) turn.requestStart = pending
   return turn
 }
 

@@ -35,10 +35,8 @@ export type Line =
       kind: 'cached'
       /** Pings keeper may still send in this stretch. */
       left: number
-      /** Whether the automatic ping can still land on a warm cache: only then is there a held end to show. */
+      /** Whether a ping can still come; false makes the deadline final. */
       extends: boolean
-      /** Whether a ping can be pressed now: the cache is warm, pings are left and the session is not muted (what `ping-now` accepts). False makes the deadline final. */
-      pingable: boolean
       /** When the cache goes cold if nothing else is sent, ms since the epoch. */
       warmUntil: number
       /**
@@ -111,7 +109,7 @@ export function lineOf(
   const extendsIt = left > 0 && bigEnough && !muted && pingFrom + minAgeMs < warmUntil
   const heldUntil = extendsIt ? warmUntil + left * minAgeMs : warmUntil
   const pingsUsd = Math.max(0, num(session?.pingCostUsd) ?? 0)
-  const line: Line = { kind: 'cached', left, extends: extendsIt, pingable: left > 0 && !muted, warmUntil, heldUntil, pingsUsd }
+  const line: Line = { kind: 'cached', left, extends: extendsIt, warmUntil, heldUntil, pingsUsd }
   if (warmUntil - now <= Math.min(WARN_SEC, ttlSec / 2) * 1000) line.warn = true
   const nextWarmUsd = num(session?.warmTurnUsd)
   if (nextWarmUsd !== undefined) Object.assign(line, { nextWarmUsd, holdUsd: heldUntil > warmUntil ? left * nextWarmUsd : 0 })
@@ -125,7 +123,7 @@ const hhmmAt = (at: number, offsetMin: number): string => {
   return `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`
 }
 
-/** The time part: `◉ 14:00→~16:35` while the automatic pings can hold the cache, `◉ 14:00` otherwise. */
+/** The time part: `◉ 14:00→~16:35` while pings can hold the cache, `◉ 14:00` when that end is final. */
 export function timeText(l: Line, offsetMin: number): string {
   if (l.kind === 'ready') return '○ ready'
   if (l.kind === 'expired') return '○ cold'
@@ -165,7 +163,7 @@ const EXAMPLE_AT = Date.UTC(2026, 0, 1, 14, 5)
 export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> = Object.freeze([
   { text: format({ kind: 'ready' }, 0), meaning: 'keeper is on; no request seen in this session yet (a resumed session too)' },
   {
-    text: format({ kind: 'cached', left: 3, extends: true, pingable: true, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT + 150 * 60_000, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0.15 }, 0),
+    text: format({ kind: 'cached', left: 3, extends: true, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT + 150 * 60_000, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0.15 }, 0),
     meaning:
       'the cache stays warm until 14:05 for sure, and keeper can extend it: if every ping left in this stretch (3 here) ' +
       'goes out, it holds until about 16:35. That end is the earliest one: a ping goes out once the cache is `minAgeSec` ' +
@@ -174,10 +172,8 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
       '`awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all',
   },
   {
-    text: format({ kind: 'cached', left: 0, extends: false, pingable: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0 }, 0),
-    meaning:
-      'no ping is coming (none left, the context is too small to hold, the session is muted, a ping missed, or the first ping would land after the cache went cold), so 14:05 is final. ' +
-      'The band still offers `↻` while the cache is warm, a ping is left and the session is not muted: a ping you press goes out even when none would on its own',
+    text: format({ kind: 'cached', left: 0, extends: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0 }, 0),
+    meaning: 'no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final',
   },
   { text: format({ kind: 'expired', nextColdUsd: 0.98 }, 0), meaning: 'the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now' },
   {
@@ -288,7 +284,7 @@ export function statusStarted($: $): void {
 export async function statusRequested($: $): Promise<void> {
   try {
     const sid = await $.session.id()
-    requested = { ...(requested?.sid === sid ? requested : {}), sid, at: await $.clock.now() }
+    requested = { sid, at: await $.clock.now() }
   } catch {
     return
   }

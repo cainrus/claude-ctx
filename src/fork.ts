@@ -8,12 +8,12 @@
  * Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
  */
 
-import { decideWake, MANUAL_FORK_MAX_MS, pingInFlight, PROMPT_STAMP_SLACK_MS, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
+import { decideWake, MANUAL_FORK_MAX_MS, pingInFlight, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
 import { groupedTokens, hhmm, NOTHING_TO_HOLD } from './format.ts'
 import { appendLedger } from './ledger.ts'
 import { addPingCost } from './report.ts'
 import { closePing, compactedSinceRequest, forkOwns, loadSession, saveForkClaim, saveSession, warmUntilOf } from './state.ts'
-import { lastMainTurn, ttlOfUsage } from './transcript.ts'
+import { ttlOfUsage } from './transcript.ts'
 
 export const FORK_PROMPT = `${WAKE_MARKER} Reply with exactly "ok".`
 
@@ -129,10 +129,7 @@ export function waitStart(input: ForkInput, ctx: Ctx, env: NodeJS.ProcessEnv = p
   // (#3683: 8 such rewrites in a week, longest wait 45 h). The asking request just renewed the cache: the stretch starts now.
   state.lastTurnEndAt = ctx.now
   state.lastRequestAt = ctx.now
-  // The server's clock runs from the asking request's start; a start outside this turn (or none) is not trusted: now.
-  const started = state.transcriptPath ? lastMainTurn(state.transcriptPath).requestStart : undefined
-  const inTurn = started !== undefined && started >= (state.lastHumanAt ?? 0) - PROMPT_STAMP_SLACK_MS && started <= ctx.now
-  state.cacheAnchorAt = inTurn ? started : ctx.now
+  state.cacheAnchorAt = ctx.now
   state.forkPingsHeld = 0
   state.waitingSince = ctx.now
   saveSession(home, state)
@@ -260,7 +257,7 @@ export function forked(input: ForkInput, ctx: Ctx): number {
     addPingCost(state, entry, ctx.config.prices)
     saveSession(home, state)
     appendLedger(home, entry)
-    return answer(ctx, { action: 'none', dueInSec: delaySec, text: manualPingText(usage, ctx.now + ctx.config.cacheTtlSec * 1000) })
+    return answer(ctx, { action: 'none', dueInSec: delaySec, text: manualPingText(usage, (state.lastPingAt ?? ctx.now) + (state.cacheTtlSec ?? ctx.config.cacheTtlSec) * 1000) })
   }
 
   const denom = usage.cacheRead + usage.cacheWrite + usage.inputTokens

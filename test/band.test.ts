@@ -11,7 +11,6 @@ import { fileURLToPath } from 'node:url'
 import { record } from '../src/commands.ts'
 import { loadSession } from '../src/state.ts'
 import { bandOn, LEGEND, partsOf, renderBand, setBand, type BandView } from '../hooks/band.ts'
-import { lineOf } from '../hooks/status.ts'
 import { configFor, makeCtx, MIN, SID, tempHome, writeTranscript } from './helpers.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -22,7 +21,7 @@ const g = globalThis as Record<string, unknown>
 g.h = (tag: { name: string }, props: Record<string, unknown> | null, ...children: unknown[]): Node => ({ tag: tag.name, props: props ?? {}, children })
 
 const view = (over: Partial<BandView> = {}, line: Partial<Extract<BandView['line'], { kind: 'cached' }>> = {}): BandView => ({
-  line: { kind: 'cached', left: 3, extends: true, pingable: true, warmUntil: T, heldUntil: T, pingsUsd: 0, ...line },
+  line: { kind: 'cached', left: 3, extends: true, warmUntil: T, heldUntil: T, pingsUsd: 0, ...line },
   offsetMin: 0,
   muted: false,
   ...over,
@@ -43,26 +42,12 @@ test('the row carries the range and the money as the status line prints them', (
 })
 
 test('no ping coming reads final; a running turn holds the ping button back', () => {
-  assert.deepEqual(partsOf(view({}, { extends: false, pingable: false }), false)[1], { text: 'final', dim: true })
+  assert.deepEqual(partsOf(view({}, { extends: false }), false)[1], { text: 'final', dim: true })
   assert.deepEqual(partsOf(view(), true)[1], { text: '↻3', dim: true })
 })
 
-test('a warm 5-minute cache with pings left keeps the ping button and shows no held end', () => {
-  const l = lineOf({ ctxTokens: 50_000, pingsSoFar: 0, lastTurnEndAt: T, cacheTtlSec: 300 }, {}, {}, T + 1_000)
-  assert.equal(l?.kind, 'cached')
-  const parts = partsOf({ line: l!, offsetMin: 0, muted: false }, false)
-  assert.deepEqual(parts[1], { key: 'ping', label: '↻4' })
-  assert.equal((parts[0] as { text: string }).text.includes('→~'), false)
-  assert.equal(parts.some((p) => 'text' in p && p.text === 'final'), false)
-  // No ping left, or muted: nothing to press.
-  const spent = lineOf({ ctxTokens: 50_000, pingsSoFar: 4, lastTurnEndAt: T, cacheTtlSec: 300 }, {}, {}, T + 1_000)
-  assert.deepEqual(partsOf({ line: spent!, offsetMin: 0, muted: false }, false)[1], { text: 'final', dim: true })
-  const muted = lineOf({ ctxTokens: 50_000, pingsSoFar: 0, lastTurnEndAt: T, cacheTtlSec: 300, doneAt: T }, {}, {}, T + 1_000)
-  assert.deepEqual(partsOf({ line: muted!, offsetMin: 0, muted: true }, false)[1], { text: 'final', dim: true })
-})
-
 test('a muted session shows done, not a button; cold and fresh lines have only the legend', () => {
-  assert.deepEqual(partsOf(view({ muted: true }, { extends: false, pingable: false }), false)[2], { text: '✓ done', dim: true })
+  assert.deepEqual(partsOf(view({ muted: true }, { extends: false }), false)[2], { text: '✓ done', dim: true })
   assert.deepEqual(partsOf(view({ line: { kind: 'expired' } }), false), [{ text: '○ cold', color: 'success' }, { key: 'help', label: '?' }])
   assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98 } }), false), [{ text: '○ cold · next $0.98', color: 'success' }, { key: 'help', label: '?' }])
   assert.deepEqual(partsOf(view({ line: { kind: 'ready' } }), false), [{ text: '○ ready' }, { key: 'help', label: '?' }])
@@ -80,7 +65,7 @@ test('the cold row is green and carries the first-turn price of a new session', 
 
 test('the legend says what the colours and the new-session price mean', () => {
   assert.match(LEGEND, /⇄\$Y/)
-  assert.match(LEGEND, /yellow/)
+  assert.match(LEGEND, /yellow time: the cache ends soon \(10 minutes, or half the bucket when that is shorter\)/)
   assert.match(LEGEND, /green/)
 })
 

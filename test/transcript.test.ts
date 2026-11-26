@@ -187,27 +187,31 @@ test('lastMainTurn: the bucket is the last one a request of this turn wrote, a r
   ])
   assert.equal(lastMainTurn(p, 1024, 10_000).ttlSec, 300)
   assert.equal(lastMainTurn(p, 1024, 25_000).ttlSec, undefined, 'a turn that wrote none: the earlier bucket is not its own')
-  assert.equal(lastMainTurn(p, 1024, 0).ttlSec, 300)
+  assert.equal(lastMainTurn(p, 1024, 0).ttlSec, undefined, 'without a turn start it stops at the newest usage, as lastMainUsage did')
+  assert.equal(lastMainTurn(p).ttlSec, undefined)
 })
 
-test('lastMainTurn and firstMainUsage stop at the scan cap instead of reading a huge file every Stop', () => {
+test('lastMainTurn bounds only the search past the newest usage, firstMainUsage all of its read', () => {
   const dir = tempHome()
   const pad = JSON.stringify({ type: 'progress', pad: 'x'.repeat(1024 * 1024) })
   const p = writeLines(dir, [assistantLine({ at: 1_000, read: 1 }), ...Array.from({ length: 18 }, () => pad)])
-  assert.equal(lastMainTurn(p).usage, undefined, 'the only request lies 18 MiB back')
+  assert.equal(lastMainTurn(p).usage?.cacheRead, 1, 'the newest usage is found however far back')
+  const capped = writeLines(dir, [userLine(500, 'start'), ...Array.from({ length: 18 }, () => pad), assistantLine({ at: 1_000, read: 1 })], 'capped.jsonl')
+  assert.equal(lastMainTurn(capped).usage?.cacheRead, 1)
+  assert.equal(lastMainTurn(capped).requestStart, undefined, 'the start lies past the cap: not guessed')
   const late = writeLines(dir, [...Array.from({ length: 3 }, () => pad), assistantLine({ at: 1_000, read: 1 })], 'late.jsonl')
   assert.equal(firstMainUsage(late, 64 * 1024, 1024 * 1024), undefined)
   assert.equal(firstMainUsage(late)?.cacheRead, 1, 'inside the default cap it is found')
 })
 
-test('the readers that predate the scan cap are not capped: firstMainUsageSince and lastMainUsage still find a request more than 16 MiB back', () => {
+test('the newest-usage readers are not capped: firstMainUsageSince, lastMainUsage and lastMainTurn still find a request more than 16 MiB back', () => {
   const dir = tempHome()
   const pad = JSON.stringify({ type: 'progress', pad: 'x'.repeat(1024 * 1024) })
   const p = writeLines(dir, [assistantLine({ at: 1_000, read: 1 }), ...Array.from({ length: 18 }, () => pad), assistantLine({ at: 2_000, read: 2 })])
   assert.equal(firstMainUsageSince(p, 500)?.cacheRead, 1, 'the first request of the turn, 18 MiB back, not the newest inside the cap')
   const only = writeLines(dir, [assistantLine({ at: 1_000, read: 1 }), ...Array.from({ length: 18 }, () => pad)], 'only.jsonl')
   assert.equal(lastMainUsage(only)?.cacheRead, 1)
-  assert.equal(lastMainTurn(only).usage, undefined, 'the new reader stays capped')
+  assert.equal(lastMainTurn(only).usage?.cacheRead, 1, 'and so does lastMainTurn')
 })
 
 test('lastMainTurn: the request start is the latest start before the answer in file order, whatever the timestamps say', () => {
@@ -236,4 +240,22 @@ test('scanFirstMainUsage: complete says whether "no usage" is final (end of file
   const found = scanFirstMainUsage(late)
   assert.equal(found.complete, true)
   assert.equal(found.usage?.cacheRead, 1)
+})
+
+test('lastMainTurn: a prompt written between the lines of the final request is not its start', () => {
+  const dir = tempHome()
+  const real = userLine(10_000, [{ type: 'tool_result', content: 'ok' }])
+  // One assistant line per content block, sharing the request id; a prompt typed while it streams lands between them.
+  const blocks = (id: string, extra: Record<string, unknown> = {}) => [assistantLine({ at: 30_000, read: 2 }, { requestId: id, ...extra }), assistantLine({ at: 30_100, read: 2 }, { requestId: id, ...extra })]
+  const byRequest = writeLines(dir, [userLine(1_000, 'first'), assistantLine({ at: 5_000, read: 1 }, { requestId: 'r0' }), real, blocks('r1')[0], userLine(30_050, 'queued'), blocks('r1')[1]], 'req.jsonl')
+  assert.equal(lastMainTurn(byRequest).requestStart, 10_000)
+  const msg = (at: number) => assistantLine({ at, read: 2 }, { message: { id: 'm1', role: 'assistant', content: [], usage: { cache_read_input_tokens: 2 } } })
+  const byMessage = writeLines(dir, [real, msg(30_000), userLine(30_050, 'queued'), msg(30_100)], 'msg.jsonl')
+  assert.equal(lastMainTurn(byMessage).requestStart, 10_000)
+  // With no id at all, a prompt between two assistant lines ends the run: the lines are separate requests.
+  const keyless = writeLines(dir, [real, assistantLine({ at: 30_000, read: 2 }), userLine(30_050, 'queued'), assistantLine({ at: 30_100, read: 2 })], 'keyless.jsonl')
+  assert.equal(lastMainTurn(keyless).requestStart, 30_050)
+  // A different request id before it: its own start is the prompt that precedes the first line.
+  const split = writeLines(dir, [assistantLine({ at: 5_000, read: 1 }, { requestId: 'r0' }), userLine(20_000, 'next'), ...blocks('r1')], 'split.jsonl')
+  assert.equal(lastMainTurn(split).requestStart, 20_000)
 })

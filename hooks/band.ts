@@ -4,7 +4,7 @@
  * errors only:
  *
  * - `◉ 14:05→~16:35` and the money after it: as on the status line above;
- *   `final` in place of the button when no ping is left or the session is muted. The time turns yellow in
+ *   `final` in place of the button when no ping is coming. The time turns yellow in
  *   the last 10 minutes (half the TTL on a 5-minute cache); the cold line is green:
  *   switching model costs nothing extra now. The status line has no colour.
  * - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
@@ -34,10 +34,10 @@ export interface BandView {
 }
 
 export const LEGEND = [
-  '◉ 14:05→~16:35  warm till 14:05 for sure, till about 16:35 if every ping left goes out; `final`: no ping left, or the session is muted',
+  '◉ 14:05→~16:35  warm till 14:05 for sure, till about 16:35 if every ping left goes out; `final`: no ping is coming',
   '$a+$b+$c  a: this session\'s pings so far · b: the next turn read from this cache · c: the pings left',
   '○ cold · next $X ⇄$Y  the next turn writes the whole context anew, at $X; a new session would pay $Y for its first turn',
-  'yellow time: the cache ends within 10 minutes · green cold: switching model is free now',
+  'yellow time: the cache ends soon (10 minutes, or half the bucket when that is shorter) · green cold: switching model is free now',
   '↻N ping now (N left) · ✓ stop keeping this session · ? pin this legend',
 ].join('\n')
 
@@ -56,7 +56,7 @@ export function partsOf(v: BandView, working: boolean): Part[] {
   const time: { text: string; color?: 'warning' } = { text: timeText(v.line, v.offsetMin) }
   if (v.line.warn) time.color = 'warning'
   const parts: Part[] = [time]
-  if (v.line.pingable) parts.push(working ? { text: `↻${v.line.left}`, dim: true } : { key: 'ping', label: `↻${v.line.left}` })
+  if (v.line.extends) parts.push(working ? { text: `↻${v.line.left}`, dim: true } : { key: 'ping', label: `↻${v.line.left}` })
   else parts.push({ text: 'final', dim: true })
   const cost = costText(v.line)
   if (cost !== undefined) parts.push({ text: cost, dim: true })

@@ -38,7 +38,7 @@ export interface HookInput {
 }
 
 const GATE_STOP_WINDOW_MS = 30_000
-export const PROMPT_STAMP_SLACK_MS = 5_000
+const PROMPT_STAMP_SLACK_MS = 5_000
 
 export interface Ctx {
   config: Config

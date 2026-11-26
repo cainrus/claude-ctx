@@ -9,6 +9,7 @@ import { measuredBreakeven, positionStats } from '../src/tune.ts'
 import { readLedger } from '../src/ledger.ts'
 import { formatReport, summarize } from '../src/report.ts'
 import { loadAwayBudget, loadSession, saveAwayBudget, saveSession } from '../src/state.ts'
+import { hhmm } from '../src/format.ts'
 import { isPingTurn } from '../hooks/keepalive.ts'
 import { assistantLine, configFor, makeCtx, MIN, SID, tempHome, writeTranscript, type TestCtx } from './helpers.ts'
 
@@ -230,6 +231,16 @@ test('the reply names the deadline: now plus the TTL, local time', () => {
   const at = new Date(2026, 0, 1, 10, 7).getTime()
   assert.equal(manualPingText({ cacheRead: 5, cacheWrite: 1 }, at + 3600_000), 'cache-keeper: pinged. Read 5 cached tokens, wrote 1; cached till 11:07.')
   assert.match(manualPingText({ cacheRead: 0, cacheWrite: 9 }, at), /nothing was read from the cache: it had gone cold\. 9 tokens written, cached till 10:07\./)
+})
+
+test("the typed ping's reply counts the session's bucket from the send time, not the config TTL from the reply", () => {
+  const { config } = setup()
+  const sent = T0 + 10 * MIN
+  answerOf(pingNow, {}, ctxAt(config, sent))
+  const written = { ...MISS.usage, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 91_000 } }
+  const a = answerOf(forked, { fork: { isAnswered: true, usage: written } }, ctxAt(config, sent + 4_000))
+  assert.ok((a as { text: string }).text.endsWith(`cached till ${hhmm(sent + 5 * MIN)}.`), (a as { text: string }).text)
+  assert.notEqual(hhmm(sent + 5 * MIN), hhmm(sent + 4_000 + config.cacheTtlSec * 1000))
 })
 
 test('status through the gate: blocked, and its Stop is the gate\'s', () => {

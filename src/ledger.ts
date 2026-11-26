@@ -51,7 +51,7 @@ export interface LedgerEntry {
   awaySeconds?: number | null
   /** ping / wake-hit / wake-miss: `fork` when the mod sent it as `$.model.fork`; absent = a wake turn. */
   transport?: 'fork'
-  /** wake-hit / wake-miss: ISO time the ping was sent, which is when the cache's clock restarted (`t` is when it was scored). */
+  /** wake-hit / wake-miss, and manual-ping when it closed a wake turn (not a fork): ISO time the ping was sent, which is when the cache's clock restarted (`t` is when it was scored). */
   sentAt?: string
   /** handoff-failed: which step refused (no-brief, spawn). fork-failed: the fork's reason (nothing-to-fork, api-error, ...). */
   failure?: string

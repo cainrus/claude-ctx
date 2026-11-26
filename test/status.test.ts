@@ -16,7 +16,6 @@ const cached = (left: number, ext: boolean, warmUntil: number, pingsUsd = 0) => 
   kind: 'cached' as const,
   left,
   extends: ext,
-  pingable: left > 0,
   warmUntil,
   heldUntil: ext ? warmUntil + left * PING_EVERY : warmUntil,
   pingsUsd,
@@ -56,8 +55,7 @@ test('the far end is the earliest one: each ping adds minAgeSec, from env, confi
   const short = pick(lineOf(session({ warmTurnUsd: 0.05 }), { maxPings: 2, cacheTtlSec: 300 }, {}, T))
   assert.equal(short.heldUntil, short.warmUntil)
   assert.equal(short.holdUsd, 0)
-  assert.equal(short.extends, false, 'no automatic ping lands warm')
-  assert.equal(short.pingable, true, 'a pressed one does')
+  assert.equal(short.extends, false, 'final, and no ping button on the band')
   const edge = pick(lineOf(session(), { maxPings: 2, cacheTtlSec: 3000 }, {}, T))
   assert.equal(edge.heldUntil, edge.warmUntil, 'a ping at exactly the TTL lands cold too')
 })
@@ -78,11 +76,6 @@ test('no ping left, a small context or a muted session make the deadline final',
   assert.equal(pick(lineOf(session({ ctxTokens: 1000 }), {}, {}, T)).extends, false)
   assert.equal(pick(lineOf(session({ doneAt: T }), {}, {}, T)).extends, false)
   assert.equal(pick(lineOf(session({ lastPingHit: false }), {}, {}, T)).extends, false)
-  // A button is offered while a ping is left and the session is not muted, whatever the context size.
-  assert.equal(pick(lineOf(session({ ctxTokens: 1000 }), {}, {}, T)).pingable, true)
-  assert.equal(pick(lineOf(session({ doneAt: T }), {}, {}, T)).pingable, false)
-  assert.equal(pick(lineOf(session({ lastPingHit: false }), {}, {}, T)).pingable, false)
-  assert.equal(pick(lineOf(session({ pingsSoFar: 4 }), { maxPings: 4 }, {}, T)).pingable, false)
   assert.equal(pick(lineOf(session({ lastPingHit: true }), {}, {}, T)).extends, true)
   assert.equal(pick(lineOf(session({ pingsSoFar: 9 }), { maxPings: 4 }, {}, T)).left, 0)
 })
@@ -192,16 +185,28 @@ test('a request seen by the mod brings its own bucket until the record catches u
   assert.equal(pick(lineOf(session({ cacheAnchorAt: T + 20 * MIN, cacheTtlSec: 3600 }), {}, {}, T + 21 * MIN, undefined, T + 10 * MIN, 300)).warmUntil, T + 20 * MIN + H)
 })
 
-test('statusStepAnswered keeps the bucket a step wrote, and a read-only step leaves it', async () => {
+test('statusStepAnswered gives the bucket a step wrote to the current request only', async () => {
   const at = Date.now()
   const $ = fakeMod({ now: at, sid: 'step-test', config: { band: false } })
   await statusRequested($ as never)
   statusStepAnswered({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
+  await refresh($ as never)
+  assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`)
+  // A new request that has not answered yet names no bucket: the 5-minute one of the old request does not carry over.
+  await statusRequested($ as never)
+  assert.equal($.shown.at(-1), `◉ ${hhmm(at + H)}`)
+})
+
+test('a read-only request after a fork that wrote the 1-hour bucket counts 1 hour, not the older 5 minutes', async () => {
+  const at = Date.now()
+  const sid = 'fork-bucket'
+  const record = { ctxTokens: 50_000, pingsSoFar: 1, lastTurnEndAt: at - 6 * MIN, cacheAnchorAt: at - 6 * MIN, cacheTtlSec: 3600 }
+  const $ = fakeMod({ now: at, sid, config: { band: false }, files: { [`/h/sessions/${sid}.json`]: JSON.stringify(record) } })
+  await statusRequested($ as never)
+  statusStepAnswered({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
   await statusRequested($ as never)
   statusStepAnswered({ input_tokens: 1 })
-  assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`)
-  await refresh($ as never)
-  assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`, 'after the read-only step the bucket is still the 5-minute one')
+  assert.ok($.shown.at(-1)!.startsWith(`◉ ${hhmm(at + H)}`), $.shown.at(-1))
 })
 
 test('the anchor is the start of the request: cacheAnchorAt wins over the answer time', () => {
@@ -230,8 +235,7 @@ test('a ping holds only if the first one can still land warm: it fires minAgeSec
   // A 5-minute bucket: the cache is cold long before the first ping (50 min after the turn).
   const five = pick(lineOf(session({ cacheTtlSec: 300 }), { maxPings: 2 }, {}, T))
   assert.equal(five.extends, false)
-  assert.equal(five.heldUntil, five.warmUntil, 'no held end')
-  assert.equal(five.pingable, true, 'a press still lands while the cache is warm, so the button stays')
+  assert.equal(five.heldUntil, five.warmUntil, 'no held end, no ping button')
   // A 1-hour bucket, but a request that ran 20 minutes: warm until T+60 from the start; the ping timer starts at T+20, fires at T+70.
   const long = pick(lineOf(session({ lastTurnEndAt: T + 20 * MIN, cacheAnchorAt: T }), { maxPings: 2 }, {}, T + 21 * MIN))
   assert.equal(long.extends, false)
