@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { format, lineOf, nodeOk } from '../hooks/status.ts'
+import { format, lineOf, nodeOk, refresh, requestStartOf, seedOf, ttlOfUsage } from '../hooks/status.ts'
 import { decide, THRESHOLDS } from '../src/policy.ts'
+import { requestStartFromLine } from '../src/transcript.ts'
+import { assistantLine, REQUEST_START_AT, REQUEST_START_CASES, SID, userLine } from './helpers.ts'
 
 const T = 1_800_000_000_000
 const MIN = 60_000
@@ -156,4 +158,191 @@ test("the line's renewal follows keeper's own rules for a muted, missed, small o
     })
     assert.equal(line.extends, verdict.ping, JSON.stringify(over))
   }
+})
+
+// --- bucket, anchor, warning window, first-turn price, resume ---
+
+const H = 60 * MIN
+
+test('the bucket of the record sets the end: 1 hour, 5 minutes, or the config when the record has none', () => {
+  assert.equal(pick(lineOf(session({ cacheTtlSec: 3600 }), {}, {}, T)).warmUntil, T + H)
+  assert.equal(pick(lineOf(session({ cacheTtlSec: 300 }), {}, {}, T)).warmUntil, T + 5 * MIN)
+  assert.equal(pick(lineOf(session(), { cacheTtlSec: 300 }, {}, T)).warmUntil, T + 5 * MIN)
+  assert.equal(pick(lineOf(session({ cacheTtlSec: 300 }), { cacheTtlSec: 3600 }, {}, T)).warmUntil, T + 5 * MIN, 'the record wins')
+  assert.deepEqual(lineOf(session({ cacheTtlSec: 300 }), {}, {}, T + 6 * MIN), { kind: 'expired' })
+})
+
+test('no bucket anywhere reads as one hour, never five minutes', () => {
+  assert.equal(pick(lineOf(session(), {}, {}, T)).warmUntil, T + H)
+  assert.equal(pick(lineOf(session({ cacheTtlSec: 'x' }), { cacheTtlSec: null }, {}, T)).warmUntil, T + H)
+})
+
+test('a request seen by the mod brings its own bucket until the record catches up', () => {
+  assert.equal(pick(lineOf(undefined, {}, {}, T + MIN, undefined, T, 300)).warmUntil, T + 5 * MIN)
+  assert.equal(pick(lineOf(session({ cacheTtlSec: 3600 }), {}, {}, T + 11 * MIN, undefined, T + 10 * MIN, 300)).warmUntil, T + 15 * MIN)
+  // An older request does not say anything about a newer record.
+  assert.equal(pick(lineOf(session({ lastRequestAt: T + 20 * MIN, cacheTtlSec: 3600 }), {}, {}, T + 21 * MIN, undefined, T + 10 * MIN, 300)).warmUntil, T + 20 * MIN + H)
+})
+
+test('statusStepAnswered keeps the bucket a step wrote, and a read-only step leaves it', async () => {
+  const { statusRequested, statusStepAnswered } = await import('../hooks/status.ts')
+  const at = Date.now()
+  const $ = fakeMod({ now: at, sid: 'step-test', config: { band: false } })
+  await statusRequested($ as never)
+  statusStepAnswered({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
+  await statusRequested($ as never)
+  statusStepAnswered({ input_tokens: 1 })
+  const hhmm = (ms: number) => {
+    const d = new Date(ms)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`)
+})
+
+test('the anchor is the start of the request: lastRequestAt wins over the answer time', () => {
+  const s = session({ lastTurnEndAt: T + 30_000, lastRequestAt: T })
+  assert.equal(pick(lineOf(s, {}, {}, T + MIN)).warmUntil, T + H)
+  // A record from before 0.7.0 has lastRequestAt equal to the turn end.
+  assert.equal(pick(lineOf(session({ lastTurnEndAt: T + 30_000 }), {}, {}, T + MIN)).warmUntil, T + 30_000 + H)
+})
+
+test('a request newer than the record counts from its start', () => {
+  assert.equal(pick(lineOf(session({ lastRequestAt: T }), {}, {}, T + 50 * MIN, undefined, T + 40 * MIN)).warmUntil, T + 100 * MIN)
+  assert.equal(pick(lineOf(session({ lastRequestAt: T + 30 * MIN }), {}, {}, T + 40 * MIN, undefined, T + 10 * MIN)).warmUntil, T + 90 * MIN)
+})
+
+test('forks hold the cache: while forkPingsHeld is set, the answer time of the last fork is the anchor', () => {
+  const s = session({ lastTurnEndAt: T + 50 * MIN, lastRequestAt: T, forkPingsHeld: 1 })
+  assert.equal(pick(lineOf(s, {}, {}, T + 55 * MIN)).warmUntil, T + 50 * MIN + H)
+  // A Stop resets forkPingsHeld and moves lastRequestAt: the record rules again.
+  assert.equal(pick(lineOf({ ...s, forkPingsHeld: 0, lastRequestAt: T + 52 * MIN }, {}, {}, T + 55 * MIN)).warmUntil, T + 52 * MIN + H)
+  assert.equal(pick(lineOf({ ...s, forkPingsHeld: 0 }, {}, {}, T + 55 * MIN)).warmUntil, T + H)
+})
+
+test('the warning window: the last 10 minutes of an hour, the last half of a 5-minute bucket (150 s)', () => {
+  const warn = (s: Record<string, unknown>, now: number) => pick(lineOf(s, {}, {}, now)).warn
+  assert.equal(warn(session(), T + 49 * MIN), undefined)
+  assert.equal(warn(session(), T + 50 * MIN), true, 'exactly 10 minutes left')
+  assert.equal(warn(session(), T + 59 * MIN), true)
+  const five = session({ cacheTtlSec: 300 })
+  assert.equal(warn(five, T + 149_000), undefined)
+  assert.equal(warn(five, T + 150_000), true, 'exactly 150 s left')
+  assert.equal(warn(five, T + 299_000), true)
+})
+
+test('the first-turn price of a new session is shown only after the cold price, and only when cheaper', () => {
+  const cold = (extra: Record<string, unknown>) => lineOf(session({ coldTurnUsd: 0.98, ...extra }), {}, {}, T + H)!
+  assert.deepEqual(cold({ coldStartUsd: 0.3 }), { kind: 'expired', nextColdUsd: 0.98, freshUsd: 0.3 })
+  assert.equal(format(cold({ coldStartUsd: 0.3 }), 0), '○ cold · next $0.98 ⇄$0.30')
+  assert.deepEqual(cold({ coldStartUsd: 0.98 }), { kind: 'expired', nextColdUsd: 0.98 }, 'equal: advises nothing')
+  assert.deepEqual(cold({ coldStartUsd: 1.5 }), { kind: 'expired', nextColdUsd: 0.98 })
+  assert.deepEqual(cold({}), { kind: 'expired', nextColdUsd: 0.98 })
+  assert.deepEqual(lineOf(session({ coldStartUsd: 0.3 }), {}, {}, T + H), { kind: 'expired' }, 'no cold price: no first-turn price')
+  const warm = pick(lineOf(session({ coldTurnUsd: 0.98, warmTurnUsd: 0.05, coldStartUsd: 0.3 }), {}, {}, T + MIN))
+  assert.equal(format(warm, 0).includes('⇄'), false, 'warm: no ⇄')
+})
+
+test('requestStartOf (the mod) and requestStartFromLine (src) read the same table', () => {
+  for (const c of REQUEST_START_CASES) {
+    assert.equal(requestStartOf(c.line), c.starts ? REQUEST_START_AT : undefined, c.name)
+    assert.equal(requestStartOf(c.line), requestStartFromLine(c.line), c.name)
+  }
+})
+
+test('ttlOfUsage reads the API split and a turn.step usage alike', () => {
+  assert.equal(ttlOfUsage({ cache_creation: { ephemeral_1h_input_tokens: 5, ephemeral_5m_input_tokens: 0 } }), 3600)
+  assert.equal(ttlOfUsage({ cache_creation: { ephemeral_5m_input_tokens: 5 } }), 300)
+  assert.equal(ttlOfUsage({ ephemeral_1h_input_tokens: 5 }), 3600)
+  assert.equal(ttlOfUsage({ ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 0 }), 300)
+  for (const none of [null, undefined, 'x', {}, { input_tokens: 4 }, { cache_creation: {} }]) assert.equal(ttlOfUsage(none), undefined)
+})
+
+const ledgerLine = (t: number, over: Record<string, unknown> = {}) => JSON.stringify({ t: new Date(t).toISOString(), sessionId: SID, event: 'wake-hit', cacheRead: 90_000, cacheWrite: 0, ...over })
+
+test('a resumed session with no record is read from its transcript: request start and bucket', () => {
+  const tail = [userLine(T, 'hi'), assistantLine({ at: T + 20_000, write: 900, split: { m5: 900 } }), userLine(T + 100_000, [{ type: 'tool_result', content: 'ok' }]), assistantLine({ at: T + 110_000, read: 900 })].join('\n')
+  assert.deepEqual(seedOf(tail, '', SID, T + 200_000), { lastRequestAt: T + 100_000, cacheTtlSec: 300 })
+  assert.deepEqual(seedOf(userLine(T, 'x'), '', SID, T), { lastRequestAt: T })
+  assert.equal(seedOf('', '', SID, T), undefined)
+  assert.equal(seedOf(assistantLine({ at: T, read: 1 }), '', SID, T), undefined)
+})
+
+test('the ledger can move the anchor: a newer wake-hit of this session, not a miss, a future one, or another session', () => {
+  const tail = userLine(T, 'hi')
+  const seed = (ledger: string[], now = T + 70 * MIN) => seedOf(tail, ledger.join('\n'), SID, now)?.lastRequestAt
+  assert.equal(seed([ledgerLine(T + 50 * MIN)]), T + 50 * MIN)
+  assert.equal(seed([ledgerLine(T + 50 * MIN), ledgerLine(T + 20 * MIN)]), T + 50 * MIN, 'the newest')
+  assert.equal(seed([ledgerLine(T - MIN)]), T, 'older than the request start')
+  assert.equal(seed([ledgerLine(T + 50 * MIN, { event: 'wake-miss' })]), T)
+  assert.equal(seed([ledgerLine(T + 50 * MIN, { cacheRead: 0, cacheWrite: 0 })]), T, 'nothing read or written')
+  assert.equal(seed([ledgerLine(T + 50 * MIN, { sessionId: 'other' })]), T)
+  assert.equal(seed([ledgerLine(T + 90 * MIN)], T + 70 * MIN), T, 'more than 60 s in the future')
+  assert.equal(seed([ledgerLine(T + 70 * MIN + 30_000)], T + 70 * MIN), T + 70 * MIN + 30_000, 'a few seconds ahead is clock skew')
+  assert.equal(seedOf('', ledgerLine(T + 50 * MIN), SID, T + 70 * MIN)?.lastRequestAt, T + 50 * MIN, 'no transcript, a hit alone')
+  assert.equal(seed(['{not json "wake-hit" ' + SID, ledgerLine(T + 50 * MIN)]), T + 50 * MIN)
+})
+
+/** The engine as refresh() touches it; `files` is what $.fs serves, `shown` every status text. */
+function fakeMod(o: { now: number; files?: Record<string, string>; sid?: string; config?: Record<string, unknown> }) {
+  const files = { ...(o.files ?? {}) }
+  if (o.config) files['/h/config.json'] = JSON.stringify(o.config)
+  const shown: string[] = []
+  const reads: string[] = []
+  const $ = {
+    shown,
+    reads,
+    session: { id: async () => o.sid ?? SID, info: async () => ({ transcriptPath: '/t/transcript.jsonl' }) },
+    clock: { now: async () => o.now },
+    env: { get: async (k: string) => (k === 'CACHE_KEEPER_HOME' ? '/h' : undefined) },
+    fs: {
+      stat: async (p: string) => {
+        if (!(p in files)) throw new Error('ENOENT')
+        return { size: Buffer.byteLength(files[p]!), kind: 'file' }
+      },
+      read: async (p: string, opts?: { offset?: number; length?: number }) => {
+        reads.push(p)
+        if (!(p in files)) throw new Error('ENOENT')
+        const bytes = Buffer.from(files[p]!)
+        return opts ? bytes.subarray(opts.offset ?? 0, (opts.offset ?? 0) + (opts.length ?? bytes.length)).toString() : files[p]!
+      },
+    },
+    ui: { status: (t: string | undefined) => void shown.push(t ?? '(clear)'), invalidate: () => {} },
+  }
+  return $
+}
+
+test('refresh: a resumed session whose cache is still warm shows the end, not ready; one long past shows cold', async () => {
+  const now = Date.now()
+  const hhmm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`
+  const warm = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': `${userLine(now - 20 * MIN, 'hi')}\n${assistantLine({ at: now - 19 * MIN, read: 5 })}\n` } })
+  await refresh(warm as never)
+  assert.equal(warm.shown.at(-1), `◉ ${hhmm(now - 20 * MIN + H)}`)
+  const cold = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': `${userLine(now - 3 * H, 'hi')}\n` } })
+  await refresh(cold as never)
+  assert.equal(cold.shown.at(-1), '○ cold')
+  const empty = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': '' } })
+  await refresh(empty as never)
+  assert.equal(empty.shown.at(-1), '○ ready')
+})
+
+test('refresh: a ledger hit after the last request keeps a resumed session warm, and the tails are not re-read until a file grows', async () => {
+  const now = Date.now()
+  const files: Record<string, string> = {
+    '/t/transcript.jsonl': `${userLine(now - 70 * MIN, 'hi')}\n`,
+    '/h/ledger.jsonl': `${ledgerLine(now - 10 * MIN)}\n`,
+  }
+  const $ = fakeMod({ now, config: { band: false }, files })
+  await refresh($ as never)
+  const hhmm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`
+  assert.equal($.shown.at(-1), `◉ ${hhmm(now - 10 * MIN + H)}`)
+  const readsBefore = $.reads.length
+  await refresh($ as never)
+  assert.equal($.reads.filter((p) => p.endsWith('transcript.jsonl') || p.endsWith('ledger.jsonl')).length, 2, 'read once')
+  assert.ok($.reads.length > readsBefore, 'config and state are read each time')
+})
+
+test('refresh: a transcript or ledger the mod cannot read leaves the line on ready, not blank', async () => {
+  const $ = fakeMod({ now: Date.now(), config: { band: false } })
+  await refresh($ as never)
+  assert.equal($.shown.at(-1), '○ ready')
 })

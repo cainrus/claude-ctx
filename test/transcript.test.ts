@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { firstMainUsageSince, lastMainUsage, usageFromLine } from '../src/transcript.ts'
-import { assistantLine, FIXTURES, tempHome } from './helpers.ts'
+import { firstMainUsage, firstMainUsageSince, lastMainUsage, lastRequestStart, requestStartFromLine, usageFromLine } from '../src/transcript.ts'
+import { assistantLine, FIXTURES, REQUEST_START_AT, REQUEST_START_CASES, tempHome, userLine, writeLines } from './helpers.ts'
 
 test('last main-thread usage skips sidechain, synthetic and non-assistant lines', () => {
   const u = lastMainUsage(join(FIXTURES, 'turn.jsonl'))
@@ -88,6 +88,7 @@ test('real shapes: the last usage is the first turn after the compaction, past e
     ctxTokens: 27_506,
     model: 'claude-opus-5-5',
     timestamp: Date.parse('2026-01-01T10:03:20.000Z'),
+    ttlSec: 3600,
   })
 })
 
@@ -107,4 +108,63 @@ test('real shapes: the committed fixture is what its generator writes', () => {
   writeFileSync(copy, readFileSync(join(FIXTURES, 'make-real-shapes.ts'), 'utf8'))
   execFileSync(process.execPath, ['--experimental-strip-types', '--no-warnings', copy])
   assert.equal(readFileSync(join(dir, 'real-shapes.jsonl'), 'utf8'), readFileSync(REAL, 'utf8'))
+})
+
+// --- cache bucket, request start, first request ---
+
+const usageOf = (usage: Record<string, unknown>) => usageFromLine(JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 1, ...usage } } }))
+
+test('usageFromLine: the bucket is the 1-hour one when any 1-hour tokens were written, else 5 minutes', () => {
+  assert.equal(usageOf({ cache_creation: { ephemeral_1h_input_tokens: 900, ephemeral_5m_input_tokens: 0 } })?.ttlSec, 3600)
+  assert.equal(usageOf({ cache_creation: { ephemeral_1h_input_tokens: 5, ephemeral_5m_input_tokens: 900 } })?.ttlSec, 3600)
+  assert.equal(usageOf({ cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 900 } })?.ttlSec, 300)
+})
+
+test('usageFromLine: a read-only turn or a transcript with no split has no bucket', () => {
+  assert.equal(usageOf({ cache_read_input_tokens: 50, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 } })?.ttlSec, undefined)
+  assert.equal('ttlSec' in usageOf({ cache_read_input_tokens: 50 })!, false)
+  assert.equal('ttlSec' in usageOf({ cache_read_input_tokens: 50, cache_creation: 'x' })!, false)
+})
+
+test('requestStartFromLine: which lines start a request (the rule of cache-anchor.jq)', () => {
+  for (const c of REQUEST_START_CASES) assert.equal(requestStartFromLine(c.line), c.starts ? REQUEST_START_AT : undefined, c.name)
+})
+
+test('lastRequestStart: the last request of the main thread, past local lines, interrupts, sidechains and the answer', () => {
+  const dir = tempHome()
+  const big = userLine(0, 'ü'.repeat(200_000))
+  const p = writeLines(dir, [
+    userLine(1_000, 'first'),
+    assistantLine({ at: 5_000, read: 1 }),
+    big,
+    userLine(10_000, [{ type: 'tool_result', content: 'ok' }]),
+    userLine(11_000, 'side', { isSidechain: true }),
+    assistantLine({ at: 30_000, read: 2 }),
+    userLine(31_000, '<local-command-stdout>x</local-command-stdout>'),
+    userLine(32_000, '[Request interrupted by user]'),
+  ])
+  assert.equal(lastRequestStart(p, 1024), 10_000)
+  assert.equal(lastRequestStart(p), 10_000)
+  assert.equal(lastRequestStart('/nonexistent/t.jsonl'), undefined)
+  assert.equal(lastRequestStart(writeLines(dir, [assistantLine({ at: 1, read: 1 })], 'none.jsonl')), undefined)
+})
+
+test('firstMainUsage: the first main-thread request from the front, whatever the chunk size', () => {
+  const dir = tempHome()
+  const p = writeLines(dir, [
+    userLine(1_000, 'hello ü ü ü'),
+    assistantLine({ at: 2_000, read: 0, write: 12_000, input: 3, model: 'claude-opus-5-5' }, { isSidechain: true }),
+    assistantLine({ at: 3_000, read: 0, write: 11_000, input: 4 }),
+    assistantLine({ at: 4_000, read: 11_004, write: 50 }),
+  ])
+  for (const chunk of [7, 64, 1024, 64 * 1024]) {
+    const u = firstMainUsage(p, chunk)
+    assert.equal(u?.ctxTokens, 11_004, `chunk ${chunk}`)
+    assert.equal(u?.timestamp, 3_000)
+  }
+  assert.equal(firstMainUsage('/nonexistent/t.jsonl'), undefined)
+  assert.equal(firstMainUsage(writeLines(dir, [userLine(1, 'x')], 'nousage.jsonl')), undefined)
+  // The last line has no newline at the end of the file.
+  writeFileSync(join(dir, 'torn.jsonl'), assistantLine({ at: 9, read: 5 }))
+  assert.equal(firstMainUsage(join(dir, 'torn.jsonl'), 16)?.cacheRead, 5)
 })

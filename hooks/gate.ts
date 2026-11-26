@@ -14,7 +14,7 @@ import type { EngineInterface, Register } from 'claude-code'
 // @ts-ignore TS5097
 import { beforeCompact, isPingTurn, keepaliveCompacted, keepaliveStarted, keepaliveTurnDone, keepaliveWaitEnd, keepaliveWaitStart, manualPing } from './keepalive.ts'
 // @ts-ignore TS5097
-import { refresh, statusRequested, statusStarted, statusTurnDone } from './status.ts'
+import { refresh, statusRequested, statusStarted, statusStepAnswered, statusTurnDone } from './status.ts'
 // @ts-ignore TS5097
 import { renderBand } from './band.ts'
 
@@ -78,7 +78,9 @@ export const register: Register = on => {
       }
     }
     if (e.agentId === undefined) void statusRequested($)
-    return yield* next(e)
+    const step = yield* next(e)
+    if (e.agentId === undefined) statusStepAnswered(step?.usage)
+    return step
   })
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {

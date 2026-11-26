@@ -4,7 +4,9 @@
  * errors only:
  *
  * - `◉ 14:05→~16:35` and the money after it: as on the status line above;
- *   `final` in place of the button when no ping is coming.
+ *   `final` in place of the button when no ping is coming. The time turns yellow in
+ *   the last 10 minutes (half the TTL on a 5-minute cache); the cold line is green:
+ *   switching model costs nothing extra now. The status line has no colour.
  * - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
  *   3 pings are left. Dim while a turn runs.
  * - `✓`: press to stop keeping this session, as `/cache-keeper:done` does;
@@ -34,7 +36,8 @@ export interface BandView {
 export const LEGEND = [
   '◉ 14:05→~16:35  warm till 14:05 for sure, till about 16:35 if every ping left goes out; `final`: no ping is coming',
   '$a+$b+$c  a: this session\'s pings so far · b: the next turn read from this cache · c: the pings left',
-  '○ cold · next $X  the next turn writes the whole context anew, at $X',
+  '○ cold · next $X ⇄$Y  the next turn writes the whole context anew, at $X; a new session would pay $Y for its first turn',
+  'yellow time: the cache ends within 10 minutes · green cold: switching model is free now',
   '↻N ping now (N left) · ✓ stop keeping this session · ? pin this legend',
 ].join('\n')
 
@@ -44,13 +47,14 @@ export function bandOn(config: Record<string, unknown>): boolean {
 }
 
 /** One piece of the row: plain text, or a button by its key. */
-export type Part = { text: string; dim?: boolean } | { key: 'ping' | 'done' | 'help'; label: string }
+export type Part = { text: string; dim?: boolean; color?: 'warning' | 'success' } | { key: 'ping' | 'done' | 'help'; label: string }
 
 /** The row, pure so the tests can drive it. `working`: a turn runs, so no ping button. */
 export function partsOf(v: BandView, working: boolean): Part[] {
   const help: Part = { key: 'help', label: '?' }
+  if (v.line.kind === 'expired') return [{ text: format(v.line, v.offsetMin), color: 'success' }, help]
   if (v.line.kind !== 'cached') return [{ text: format(v.line, v.offsetMin) }, help]
-  const parts: Part[] = [{ text: timeText(v.line, v.offsetMin) }]
+  const parts: Part[] = [{ text: timeText(v.line, v.offsetMin), ...(v.line.warn ? { color: 'warning' as const } : {}) }]
   if (v.line.extends) parts.push(working ? { text: `↻${v.line.left}`, dim: true } : { key: 'ping', label: `↻${v.line.left}` })
   else parts.push({ text: 'final', dim: true })
   const cost = costText(v.line)
@@ -122,7 +126,7 @@ export async function renderBand<E extends { props: { hasSurvey: boolean; isWork
     const { Box, Button, Text } = $.ui.resolve(e as never) as ReturnType<$['ui']['resolve']>
     const row = partsOf(v, e.props.isWorking).flatMap((p, i) => {
       const gap = i === 0 ? [] : [h(Text, null, ' ')]
-      if ('text' in p) return [...gap, h(Text, { dimColor: p.dim === true }, p.text)]
+      if ('text' in p) return [...gap, h(Text, { dimColor: p.dim === true, ...(p.color ? { color: p.color } : {}) }, p.text)]
       const key = p.key
       const onPress = key === 'help'
         ? () => {

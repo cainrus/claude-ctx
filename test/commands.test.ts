@@ -7,7 +7,7 @@ import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
 import { rateFor } from '../src/prices.ts'
 import { loadAwayBudget, loadSession, newSession, saveAwayBudget, saveSession } from '../src/state.ts'
-import { assistantLine, configFor, FIXTURES, makeCtx, MIN, SID, tempHome, writeTranscript } from './helpers.ts'
+import { assistantLine, configFor, FIXTURES, makeCtx, MIN, SID, tempHome, userLine, writeLines, writeTranscript } from './helpers.ts'
 
 const T0 = Date.parse('2026-01-01T10:00:00.000Z')
 const BIG = { read: 90_000, write: 1_000 }
@@ -409,4 +409,70 @@ test('done: only the namespaced command matches', () => {
   assert.ok(!isDoneCommand('/done'))
   assert.ok(!isDoneCommand('/cache-keeper:doneish'))
   assert.ok(!isDoneCommand('please run /cache-keeper:done'))
+})
+
+// --- cache bucket, request start, first-turn price ---------------------------------
+
+test('record: the cache bucket is the one the turn wrote; a read-only turn keeps the previous', () => {
+  const home = tempHome()
+  const config = configFor(home)
+  const turn = (at: number, spec: Partial<Parameters<typeof assistantLine>[0]>) => {
+    const transcript = writeTranscript(home, [{ at, ...BIG, ...spec }])
+    record({ session_id: SID, transcript_path: transcript }, makeCtx(config, at + 500))
+    return loadSession(home, SID)!.cacheTtlSec
+  }
+  assert.equal(turn(T0, { split: { h1: 1_000 } }), 3600)
+  assert.equal(turn(T0 + MIN, { write: 0, split: { m5: 0, h1: 0 } }), 3600, 'read-only: kept')
+  assert.equal(turn(T0 + 2 * MIN, { write: 800, split: { m5: 800 } }), 300)
+  assert.equal(turn(T0 + 3 * MIN, { write: 0, read: 90_000 }), 300, 'no split in the transcript: kept')
+})
+
+test('record: no split ever seen leaves the bucket unset, so the line falls back to the config', () => {
+  const { home } = setup()
+  assert.equal(loadSession(home, SID)!.cacheTtlSec, undefined)
+})
+
+test('record: lastRequestAt is the start of the request, lastTurnEndAt stays the answer time', () => {
+  const home = tempHome()
+  const config = configFor(home)
+  const transcript = writeLines(home, [userLine(T0 - 25_000, 'do it'), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(config, T0 + 500))
+  const s = loadSession(home, SID)!
+  assert.equal(s.lastRequestAt, T0 - 25_000)
+  assert.equal(s.lastTurnEndAt, T0)
+})
+
+test('record: a tool loop anchors at its last request, the tool result before the final answer', () => {
+  const home = tempHome()
+  const transcript = writeLines(home, [
+    userLine(T0 - 60_000, 'do it'),
+    assistantLine({ at: T0 - 50_000, ...BIG }),
+    userLine(T0 - 20_000, [{ type: 'tool_result', content: 'ok' }]),
+    assistantLine({ at: T0, ...BIG }),
+  ])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.lastRequestAt, T0 - 20_000)
+})
+
+test('record: no request start in the transcript, or one after the answer, keeps lastRequestAt at the turn end', () => {
+  const { home } = setup()
+  assert.equal(loadSession(home, SID)!.lastRequestAt, T0)
+  const late = writeLines(home, [assistantLine({ at: T0, ...BIG }), userLine(T0 + 5_000, 'next')], 'late.jsonl')
+  record({ session_id: SID, transcript_path: late }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.lastRequestAt, T0)
+})
+
+test("record: a new session's first turn is priced once, from the first request's prompt, in a 1-hour cache", () => {
+  const home = tempHome()
+  const config = configFor(home)
+  const transcript = writeLines(home, [userLine(T0 - 9_000, 'hi'), assistantLine({ at: T0 - 5_000, read: 0, write: 30_000, input: 0 }), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(config, T0 + 500))
+  const s = loadSession(home, SID)!
+  const r = rateFor(s.model, config.prices, 30_000)
+  assert.equal(s.coldStartUsd, (30_000 * r.cacheWrite) / 1e6)
+  assert.ok(s.coldStartUsd! < s.coldTurnUsd!)
+  const grown = writeLines(home, [assistantLine({ at: T0 + MIN, read: 400_000, write: 1_000 })], 'grown.jsonl')
+  const before = s.coldStartUsd
+  record({ session_id: SID, transcript_path: grown }, makeCtx(config, T0 + MIN + 500))
+  assert.equal(loadSession(home, SID)!.coldStartUsd, before, 'set once')
 })

@@ -27,7 +27,7 @@ The table is generated from `SETTINGS` in `src/config.ts` (`node scripts/docs.ts
 | `statusLine` | — | `true` | show the cache line under the prompt (see [Status line](status-line.md)); only `false` turns it off |
 | `band` | — | `true` | draw that line above the prompt with buttons instead, where the mod loads (see [The band](status-line.md#the-band-the-same-line-clickable)); `false` keeps it plain text |
 | `forkPings` | `CACHE_KEEPER_FORK` | `true` | ping with a fork instead of a wake turn where the plugin's mod loads (see [Fork pings](fork-pings.md)) |
-| `cacheTtlSec` | — | `3600` | the cache TTL the status line, `/cache-keeper:status`, `/cache-keeper:ping` and the report assume; change it only if yours is not one hour |
+| `cacheTtlSec` | — | `3600` | the cache TTL `/cache-keeper:status`, `/cache-keeper:ping`, the report and the ping timing assume; the status line uses the bucket the last turn really wrote and falls back to this; change it only if yours is not one hour |
 | `handoff.*` | | | see [Handoff](handoff.md) |
 <!-- /gen:settings -->
 

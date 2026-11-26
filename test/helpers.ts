@@ -50,6 +50,13 @@ export interface UsageSpec {
   write?: number
   output?: number
   model?: string
+  /** The API's `cache_creation` split of `write`, tokens written for 1 hour and for 5 minutes. */
+  split?: { h1?: number; m5?: number }
+}
+
+/** A main-thread `user` entry: a prompt (string content), or any content the test gives. */
+export function userLine(at: number, content: unknown, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({ type: 'user', isSidechain: false, sessionId: SID, timestamp: new Date(at).toISOString(), message: { role: 'user', content }, ...extra })
 }
 
 export function assistantLine(u: UsageSpec, extra: Record<string, unknown> = {}): string {
@@ -68,10 +75,18 @@ export function assistantLine(u: UsageSpec, extra: Record<string, unknown> = {})
         cache_read_input_tokens: u.read ?? 0,
         cache_creation_input_tokens: u.write ?? 0,
         output_tokens: u.output ?? 10,
+        ...(u.split ? { cache_creation: { ephemeral_1h_input_tokens: u.split.h1 ?? 0, ephemeral_5m_input_tokens: u.split.m5 ?? 0 } } : {}),
       },
     },
     ...extra,
   })
+}
+
+/** Write a transcript from raw lines. */
+export function writeLines(dir: string, lines: string[], name = 'transcript.jsonl'): string {
+  const path = join(dir, name)
+  writeFileSync(path, `${lines.join('\n')}\n`)
+  return path
 }
 
 /** Write a transcript whose last main-thread turn has the given usage. */
@@ -80,3 +95,31 @@ export function writeTranscript(dir: string, turns: UsageSpec[], name = 'transcr
   writeFileSync(path, `${turns.map((t) => assistantLine(t)).join('\n')}\n`)
   return path
 }
+
+const AT = Date.UTC(2026, 0, 1, 10, 0, 0)
+
+/** The rule of ~/dotfiles cache-anchor.jq, one row per case: does this transcript line start a model request? */
+export const REQUEST_START_CASES: Array<{ name: string; line: string; starts: boolean }> = [
+  { name: 'a typed prompt', line: userLine(AT, 'fix the bug'), starts: true },
+  { name: 'a prompt in a text block', line: userLine(AT, [{ type: 'text', text: 'fix the bug' }]), starts: true },
+  { name: 'a tool result', line: userLine(AT, [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }]), starts: true },
+  { name: 'a tool result whose text looks like a command tag', line: userLine(AT, [{ type: 'tool_result', content: '<command-name>x</command-name>' }]), starts: true },
+  { name: 'a skill expansion (isMeta)', line: userLine(AT, 'Base directory for this skill: /x', { isMeta: true }), starts: true },
+  { name: 'a task notification', line: userLine(AT, '<task-notification>done</task-notification>'), starts: true },
+  { name: 'a compaction summary', line: userLine(AT, 'This session is being continued', { isCompactSummary: true }), starts: false },
+  { name: 'a slash command line', line: userLine(AT, '<command-name>/model</command-name>'), starts: false },
+  { name: 'a command message', line: userLine(AT, '<command-message>x</command-message>'), starts: false },
+  { name: 'command args', line: userLine(AT, '  <command-args>x</command-args>'), starts: false },
+  { name: 'local command output', line: userLine(AT, '<local-command-stdout>ok</local-command-stdout>'), starts: false },
+  { name: 'local command stderr', line: userLine(AT, '<local-command-stderr>no</local-command-stderr>'), starts: false },
+  { name: 'local command caveat', line: userLine(AT, '<local-command-caveat>c</local-command-caveat>'), starts: false },
+  { name: 'a bang command', line: userLine(AT, '<bash-input>ls</bash-input>'), starts: false },
+  { name: 'bang command output', line: userLine(AT, '<bash-stdout>x</bash-stdout>'), starts: false },
+  { name: 'bang command stderr', line: userLine(AT, '<bash-stderr>x</bash-stderr>'), starts: false },
+  { name: 'an interrupt note', line: userLine(AT, [{ type: 'text', text: '[Request interrupted by user]' }]), starts: false },
+  { name: 'a sidechain prompt', line: userLine(AT, 'sub task', { isSidechain: true }), starts: false },
+  { name: 'an assistant entry', line: assistantLine({ at: AT, read: 1 }), starts: false },
+  { name: 'an entry without a timestamp', line: JSON.stringify({ type: 'user', message: { content: 'x' } }), starts: false },
+  { name: 'junk', line: '{"type":"user", torn', starts: false },
+]
+export const REQUEST_START_AT = AT

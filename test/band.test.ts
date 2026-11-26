@@ -48,9 +48,38 @@ test('no ping coming reads final; a running turn holds the ping button back', ()
 
 test('a muted session shows done, not a button; cold and fresh lines have only the legend', () => {
   assert.deepEqual(partsOf(view({ muted: true }, { extends: false }), false)[2], { text: '✓ done', dim: true })
-  assert.deepEqual(partsOf(view({ line: { kind: 'expired' } }), false), [{ text: '○ cold' }, { key: 'help', label: '?' }])
-  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98 } }), false), [{ text: '○ cold · next $0.98' }, { key: 'help', label: '?' }])
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired' } }), false), [{ text: '○ cold', color: 'success' }, { key: 'help', label: '?' }])
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98 } }), false), [{ text: '○ cold · next $0.98', color: 'success' }, { key: 'help', label: '?' }])
   assert.deepEqual(partsOf(view({ line: { kind: 'ready' } }), false), [{ text: '○ ready' }, { key: 'help', label: '?' }])
+})
+
+test('the time goes yellow in the warning window, and nowhere else', () => {
+  assert.deepEqual(partsOf(view({}, { warn: true }), false)[0], { text: '◉ 08:00', color: 'warning' })
+  assert.deepEqual(partsOf(view({}, {}), false)[0], { text: '◉ 08:00' })
+  assert.equal(partsOf(view({ line: { kind: 'ready' } }), false)[0]!.hasOwnProperty('color'), false)
+})
+
+test('the cold row is green and carries the first-turn price of a new session', () => {
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98, freshUsd: 0.3 } }), false)[0], { text: '○ cold · next $0.98 ⇄$0.30', color: 'success' })
+})
+
+test('the legend says what the colours and the new-session price mean', () => {
+  assert.match(LEGEND, /⇄\$Y/)
+  assert.match(LEGEND, /yellow/)
+  assert.match(LEGEND, /green/)
+})
+
+test('a coloured part reaches the Text element as its colour; a plain one carries none', async () => {
+  const { $ } = fakeEngine(tempHome())
+  setBand($ as never, view({}, { warn: true }))
+  const warm = await renderBand($ as never, e, next, async () => {})
+  assert.equal(find(warm, (n) => n.tag === 'Text' && n.children[0] === '◉ 08:00')?.props.color, 'warning')
+  setBand($ as never, view({ line: { kind: 'expired', nextColdUsd: 0.98 } }))
+  const cold = await renderBand($ as never, e, next, async () => {})
+  assert.equal(find(cold, (n) => n.tag === 'Text' && n.children[0] === '○ cold · next $0.98')?.props.color, 'success')
+  setBand($ as never, view())
+  const plain = await renderBand($ as never, e, next, async () => {})
+  assert.equal('color' in (find(plain, (n) => n.tag === 'Text' && n.children[0] === '◉ 08:00')?.props ?? {}), false)
 })
 
 test('the band is on unless config says "band": false', () => {

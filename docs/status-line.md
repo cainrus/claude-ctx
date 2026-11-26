@@ -3,9 +3,12 @@
 <!-- gen:module hooks/status.ts -->
 The status line: one pinned line under the prompt saying whether keeper is on
 and until when this session's prompt cache stays warm, counted from the last
-model request. It refreshes on load, as each request goes out, a few seconds
-after each turn and every 30 s. A session continued from another one starts at
-`ready`. It also says when `node` on PATH cannot run the hooks, which would
+model request (the start of the request, not of its answer; the bucket, 1 hour or
+5 minutes, is the one the last write really used). It refreshes on load, as each request goes out, a few seconds
+after each turn and every 30 s. A resumed session is read from its transcript and
+keeper's ledger, so a cache still warm shows as warm. Once the cache is cold the
+line says what the next turn costs and, when it is cheaper, a new session's first
+turn. It also says when `node` on PATH cannot run the hooks, which would
 otherwise fail without a word. Set `"statusLine": false` in config.json to turn
 it off, e.g. when your own statusLine command already shows keeper. Where the
 mod loads, band.ts draws the same line above the prompt with buttons, and this
@@ -18,7 +21,8 @@ Every form it takes, printed by the real `format()`:
 - `○ ready`: keeper is on; nothing has been sent in this session yet.
 - `◉ 14:05→~16:35  $0.17+$0.05+$0.15`: the cache stays warm until 14:05 for sure, and keeper can extend it: if every ping left in this stretch (3 here) goes out, it holds until about 16:35. That end is the earliest one: a ping goes out once the cache is `minAgeSec` old (50 min) and renews it from then. The money: $0.17 this session's pings cost so far, $0.05 the next turn's prompt read from this cache, $0.15 the pings left (each a read of the context). A ping still needs you back within `awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all.
 - `◉ 14:05  $0.17+$0.05`: no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final.
-- `○ cold · next $0.98`: the cache went cold; the next turn writes the whole context anew, at $0.98.
+- `○ cold · next $0.98`: the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now.
+- `○ cold · next $0.98 ⇄$0.30`: the same, and a new session would pay $0.30 for its first turn (its start prompt, written anew): the floor of a handoff, shown only when it is cheaper.
 - `error: needs Node.js ≥ 22.18`: `node` on `PATH` is missing or too old to run the hooks, so keeper does nothing.
 - `error: record failed · ~/.claude-cache-keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/cache-keeper:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
 - `(nothing)`: keeper is off, or `"statusLine": false`.
@@ -41,7 +45,9 @@ buttons, `◉ 14:05→~16:35 ↻3 $0.17+$0.05+$0.15 ✓ ?`, and the status line 
 errors only:
 
 - `◉ 14:05→~16:35` and the money after it: as on the status line above;
-  `final` in place of the button when no ping is coming.
+  `final` in place of the button when no ping is coming. The time turns yellow in
+  the last 10 minutes (half the TTL on a 5-minute cache); the cold line is green:
+  switching model costs nothing extra now. The status line has no colour.
 - `↻3`: press to ping now, as `/cache-keeper:ping` does (a fork, no turn);
   3 pings are left. Dim while a turn runs.
 - `✓`: press to stop keeping this session, as `/cache-keeper:done` does;

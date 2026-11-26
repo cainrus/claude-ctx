@@ -12,6 +12,8 @@ export interface TurnUsage {
   model?: string
   /** Epoch ms of the transcript entry. */
   timestamp?: number
+  /** The cache bucket this turn wrote: 3600 if it wrote any 1-hour tokens, else 300; absent for a read-only turn or a transcript that does not split writes. */
+  ttlSec?: 300 | 3600
 }
 
 const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
@@ -38,6 +40,8 @@ export function usageFromLine(line: string): TurnUsage | undefined {
   // WORKAROUND: an error turn under another name has all-zero usage; reading it would zero the context.
   if (inputTokens + cacheRead + cacheWrite === 0) return undefined
   const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
+  const split = u.cache_creation && typeof u.cache_creation === 'object' ? u.cache_creation : {}
+  const ttlSec = n(split.ephemeral_1h_input_tokens) > 0 ? 3600 : n(split.ephemeral_5m_input_tokens) > 0 ? 300 : undefined
   return {
     inputTokens,
     cacheRead,
@@ -46,10 +50,37 @@ export function usageFromLine(line: string): TurnUsage | undefined {
     ctxTokens: inputTokens + cacheRead + cacheWrite,
     ...(typeof msg.model === 'string' ? { model: msg.model } : {}),
     ...(Number.isFinite(ts) ? { timestamp: ts } : {}),
+    ...(ttlSec !== undefined ? { ttlSec } : {}),
   }
 }
 
-function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: TurnUsage) => boolean): void {
+/** Lines the client writes itself: they send no request. */
+const LOCAL_ONLY = /^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr)>/
+
+/** Epoch ms of a main-thread `user` entry that a model request follows; undefined for any other line. */
+// INVARIANT: hooks/status.ts `requestStartOf` is the mod's copy of this rule; keep the two in step (test/status.test.ts runs one table on both).
+export function requestStartFromLine(line: string): number | undefined {
+  if (!line.includes('"user"')) return undefined
+  let rec: any
+  try {
+    rec = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  if (!rec || rec.type !== 'user' || rec.isSidechain === true) return undefined
+  const content = rec.message?.content
+  const isToolResult = Array.isArray(content) && content.some((b: any) => b && typeof b === 'object' && b.type === 'tool_result')
+  if (!isToolResult) {
+    if (rec.isCompactSummary === true) return undefined
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('') : ''
+    // The interrupt note is written after the request already went out and renewed the cache.
+    if (LOCAL_ONLY.test(text) || text.startsWith('[Request interrupted')) return undefined
+  }
+  const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
+  return Number.isFinite(ts) ? ts : undefined
+}
+
+function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean): void {
   let fd: number
   try {
     fd = openSync(transcriptPath, 'r')
@@ -66,8 +97,7 @@ function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: 
       const lines = buf.toString('utf8').split('\n')
       const from = start === 0 ? 0 : 1
       for (let i = lines.length - 1; i >= from; i--) {
-        const u = usageFromLine(lines[i])
-        if (u && visit(u)) return
+        if (visit(lines[i])) return
       }
       if (start === 0) return
       const firstBreak = buf.indexOf(0x0a)
@@ -76,6 +106,57 @@ function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: 
     }
   } catch {
     return
+  } finally {
+    closeSync(fd)
+  }
+}
+
+function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: TurnUsage) => boolean): void {
+  scanLinesBackwards(transcriptPath, initialChunk, (line) => {
+    const u = usageFromLine(line)
+    return u !== undefined && visit(u)
+  })
+}
+
+/** When the last request of the main thread started: the cache lifetime counts from there, not from its answer. */
+export function lastRequestStart(transcriptPath: string, initialChunk = 256 * 1024): number | undefined {
+  let at: number | undefined
+  scanLinesBackwards(transcriptPath, initialChunk, (line) => {
+    at = requestStartFromLine(line)
+    return at !== undefined
+  })
+  return at
+}
+
+/** The session's first main-thread request, read from the front: the size of a start with nothing but the system prompt. */
+export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024): TurnUsage | undefined {
+  let fd: number
+  try {
+    fd = openSync(transcriptPath, 'r')
+  } catch {
+    return undefined
+  }
+  try {
+    const buf = Buffer.alloc(chunk)
+    let carry = ''
+    for (;;) {
+      const got = readSync(fd, buf, 0, chunk, null)
+      if (got === 0) return usageFromLine(carry)
+      // WARNING: decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
+      const bytes = Buffer.concat([Buffer.from(carry, 'latin1'), buf.subarray(0, got)])
+      const lastBreak = bytes.lastIndexOf(0x0a)
+      if (lastBreak < 0) {
+        carry = bytes.toString('latin1')
+        continue
+      }
+      for (const line of bytes.subarray(0, lastBreak).toString('utf8').split('\n')) {
+        const u = usageFromLine(line)
+        if (u) return u
+      }
+      carry = bytes.subarray(lastBreak + 1).toString('latin1')
+    }
+  } catch {
+    return undefined
   } finally {
     closeSync(fd)
   }

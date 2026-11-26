@@ -4,7 +4,7 @@ import type { Config } from './config.ts'
 import { handoffMessage, interceptPrompt, requestHandoff, settleHandoff, wantsHandoff, type HandoffIO } from './handoff.ts'
 import { appendLedger, type RefusalReason } from './ledger.ts'
 import { takeNotices } from './notices.ts'
-import { addPingCost, turnPrices } from './report.ts'
+import { addPingCost, coldStartUsd, turnPrices } from './report.ts'
 import { statusReport } from './inspect.ts'
 import { decide, isAtKeyboard } from './policy.ts'
 import {
@@ -19,7 +19,7 @@ import {
   saveSession,
   type SessionState,
 } from './state.ts'
-import { firstMainUsageSince, lastMainUsage } from './transcript.ts'
+import { firstMainUsage, firstMainUsageSince, lastMainUsage, lastRequestStart } from './transcript.ts'
 import { tunedMaxPings } from './tune.ts'
 import type { SessionFacts, Verdict } from './veto.ts'
 import { WAKE_REPLY } from './wake-text.ts'
@@ -146,13 +146,20 @@ export function record(input: HookInput, ctx: Ctx): number {
   // "now" could land after the sleeper this Stop started and make it look stale. An entry older than the last prompt = not caught up: now.
   const ts = usage?.timestamp
   state.lastTurnEndAt = ts !== undefined && ts >= (state.lastHumanAt ?? 0) ? Math.min(ts, ctx.now) : ctx.now
-  state.lastRequestAt = state.lastTurnEndAt
+  // The cache lifetime counts from the request's start: the user entry that sent it, never later than the turn's end.
+  const startedAt = state.transcriptPath ? lastRequestStart(state.transcriptPath) : undefined
+  state.lastRequestAt = startedAt !== undefined && startedAt <= state.lastTurnEndAt ? startedAt : state.lastTurnEndAt
   state.forkPingsHeld = 0
 
   if (usage) {
     state.ctxTokens = usage.ctxTokens
     if (usage.model) state.model = usage.model
     Object.assign(state, turnPrices(state.ctxTokens, state.model, ctx.config.prices))
+    if (usage.ttlSec !== undefined) state.cacheTtlSec = usage.ttlSec
+  }
+  if (state.coldStartUsd === undefined && state.transcriptPath) {
+    const first = firstMainUsage(state.transcriptPath)
+    if (first) state.coldStartUsd = coldStartUsd(first.ctxTokens, state.model ?? first.model, ctx.config.prices)
   }
 
   // INVARIANT: only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook

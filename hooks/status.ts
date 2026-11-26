@@ -1,9 +1,12 @@
 /**
  * The status line: one pinned line under the prompt saying whether keeper is on
  * and until when this session's prompt cache stays warm, counted from the last
- * model request. It refreshes on load, as each request goes out, a few seconds
- * after each turn and every 30 s. A session continued from another one starts at
- * `ready`. It also says when `node` on PATH cannot run the hooks, which would
+ * model request (the start of the request, not of its answer; the bucket, 1 hour or
+ * 5 minutes, is the one the last write really used). It refreshes on load, as each request goes out, a few seconds
+ * after each turn and every 30 s. A resumed session is read from its transcript and
+ * keeper's ledger, so a cache still warm shows as warm. Once the cache is cold the
+ * line says what the next turn costs and, when it is cheaper, a new session's first
+ * turn. It also says when `node` on PATH cannot run the hooks, which would
  * otherwise fail without a word. Set `"statusLine": false` in config.json to turn
  * it off, e.g. when your own statusLine command already shows keeper. Where the
  * mod loads, band.ts draws the same line above the prompt with buttons, and this
@@ -20,7 +23,10 @@ const NODE_CHECK_TIMEOUT_MS = 5_000
 
 const DEFAULT_MAX_PINGS = 4
 const DEFAULT_MIN_CTX_TOKENS = 20_000
+// INVARIANT: a missing TTL reads as one hour: a wrong guess that way stays silent, the other way tells a person to pay for a re-read they did not need.
 const DEFAULT_TTL_SEC = 3600
+/** The time part warns this long before the end, or at half the TTL on a 5-minute cache. */
+const WARN_SEC = 600
 /** As src/policy.ts THRESHOLDS.minAgeSec: the cache age at which keeper pings. */
 const DEFAULT_MIN_AGE_SEC = 50 * 60
 
@@ -48,11 +54,15 @@ export type Line =
       nextWarmUsd?: number
       /** Every ping left, each a read of the context: holding the cache to `heldUntil`, USD. */
       holdUsd?: number
+      /** Present when the end is near: min(10 min, half the TTL) left. */
+      warn?: true
     }
   | {
       kind: 'expired'
       /** The next turn's prompt written into a new cache, USD; undefined in a record from before 0.6.7. */
       nextColdUsd?: number
+      /** A new session's first turn, USD; present only when it is cheaper than `nextColdUsd`. */
+      freshUsd?: number
     }
 
 type Json = Record<string, unknown>
@@ -65,7 +75,7 @@ export function shown(config: Json, env: { disabled?: string }): boolean {
   return config.enabled !== false && config.statusLine !== false && !truthy(env.disabled)
 }
 
-/** `requestedAt`: this session's last model request seen by the mod, ms since the epoch. */
+/** `requestedAt`, `requestedTtlSec`: this session's last model request seen by the mod (ms since the epoch) and the cache bucket it wrote. */
 export function lineOf(
   session: Json | undefined,
   config: Json,
@@ -73,13 +83,25 @@ export function lineOf(
   now: number,
   tuning?: Json,
   requestedAt?: number,
+  requestedTtlSec?: number,
 ): Line | undefined {
   if (!shown(config, env)) return undefined
-  const lastSent = Math.max(num(session?.lastTurnEndAt) ?? 0, requestedAt ?? 0)
+  const turnEnd = num(session?.lastTurnEndAt) ?? 0
+  // WARNING: a fork ping renews the cache but never lastRequestAt (src/fork.ts leaves it: compact-check reads it as Claude Code's own clock),
+  // so while forks hold the cache (forkPingsHeld, reset by each Stop) lastTurnEndAt, which a fork sets, is the later anchor.
+  const forkRenewed = (num(session?.forkPingsHeld) ?? 0) > 0 ? turnEnd : 0
+  const recorded = Math.max(num(session?.lastRequestAt) ?? turnEnd, forkRenewed)
+  const lastSent = Math.max(recorded, requestedAt ?? 0)
   if (lastSent === 0) return { kind: 'ready' }
-  const warmUntil = lastSent + (num(config.cacheTtlSec) ?? DEFAULT_TTL_SEC) * 1000
+  const fromRequest = requestedAt !== undefined && requestedAt >= recorded ? requestedTtlSec : undefined
+  const ttlSec = fromRequest ?? num(session?.cacheTtlSec) ?? num(config.cacheTtlSec) ?? DEFAULT_TTL_SEC
+  const warmUntil = lastSent + ttlSec * 1000
   const nextColdUsd = num(session?.coldTurnUsd)
-  if (now >= warmUntil) return nextColdUsd === undefined ? { kind: 'expired' } : { kind: 'expired', nextColdUsd }
+  if (now >= warmUntil) {
+    if (nextColdUsd === undefined) return { kind: 'expired' }
+    const freshUsd = num(session?.coldStartUsd)
+    return freshUsd !== undefined && freshUsd < nextColdUsd ? { kind: 'expired', nextColdUsd, freshUsd } : { kind: 'expired', nextColdUsd }
+  }
   // INVARIANT: mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
   const max = envNum(env.maxPings) ?? num(config.maxPings) ?? num(tuning?.maxPings) ?? DEFAULT_MAX_PINGS
   const left = Math.max(0, max - (num(session?.pingsSoFar) ?? 0))
@@ -91,6 +113,7 @@ export function lineOf(
   const heldUntil = extendsIt ? warmUntil + left * minAgeMs : warmUntil
   const pingsUsd = Math.max(0, num(session?.pingCostUsd) ?? 0)
   const line: Line = { kind: 'cached', left, extends: extendsIt, warmUntil, heldUntil, pingsUsd }
+  if (warmUntil - now <= Math.min(WARN_SEC, ttlSec / 2) * 1000) line.warn = true
   const nextWarmUsd = num(session?.warmTurnUsd)
   if (nextWarmUsd !== undefined) Object.assign(line, { nextWarmUsd, holdUsd: heldUntil > warmUntil ? left * nextWarmUsd : 0 })
   return line
@@ -111,10 +134,13 @@ export function timeText(l: Line, offsetMin: number): string {
   return l.heldUntil > l.warmUntil ? `◉ ${sure}→~${hhmmAt(l.heldUntil, offsetMin)}` : `◉ ${sure}`
 }
 
-/** The money part: `$spent+$next turn warm+$hold to the end` (the last only with pings coming), or `next $X` once cold. */
+/** The money part: `$spent+$next turn warm+$hold to the end` (the last only with pings coming), or `next $X` (and `⇄$Y`, a new session's first turn) once cold. */
 export function costText(l: Line): string | undefined {
   if (l.kind === 'ready') return undefined
-  if (l.kind === 'expired') return l.nextColdUsd === undefined ? undefined : `next ${usd(l.nextColdUsd)}`
+  if (l.kind === 'expired') {
+    if (l.nextColdUsd === undefined) return undefined
+    return l.freshUsd === undefined ? `next ${usd(l.nextColdUsd)}` : `next ${usd(l.nextColdUsd)} ⇄${usd(l.freshUsd)}`
+  }
   if (l.nextWarmUsd === undefined) return undefined
   const parts = [l.pingsUsd, l.nextWarmUsd, ...(l.holdUsd ? [l.holdUsd] : [])]
   return parts.map(usd).join('+')
@@ -151,7 +177,11 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
     text: format({ kind: 'cached', left: 0, extends: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0 }, 0),
     meaning: 'no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final',
   },
-  { text: format({ kind: 'expired', nextColdUsd: 0.98 }, 0), meaning: 'the cache went cold; the next turn writes the whole context anew, at $0.98' },
+  { text: format({ kind: 'expired', nextColdUsd: 0.98 }, 0), meaning: 'the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now' },
+  {
+    text: format({ kind: 'expired', nextColdUsd: 0.98, freshUsd: 0.3 }, 0),
+    meaning: 'the same, and a new session would pay $0.30 for its first turn (its start prompt, written anew): the floor of a handoff, shown only when it is cheaper',
+  },
   { text: NODE_ERROR, meaning: '`node` on `PATH` is missing or too old to run the hooks, so keeper does nothing' },
   {
     text: errorLine({ lastError: { cmd: 'record' } }, '~/.claude-cache-keeper') ?? '',
@@ -173,7 +203,109 @@ export function nodeOk(version: string): boolean {
 
 let nodeBroken: boolean | undefined
 
-let requested: { sid: string; at: number } | undefined
+let requested: { sid: string; at: number; ttlSec?: 300 | 3600 } | undefined
+
+/** The bucket a usage object wrote: from the API's `cache_creation` split, or the same two fields flat (a `turn.step` result). */
+export function ttlOfUsage(u: unknown): 300 | 3600 | undefined {
+  if (!u || typeof u !== 'object') return undefined
+  const flat = u as Json
+  const split = flat.cache_creation && typeof flat.cache_creation === 'object' ? (flat.cache_creation as Json) : flat
+  if ((num(split.ephemeral_1h_input_tokens) ?? 0) > 0) return 3600
+  return (num(split.ephemeral_5m_input_tokens) ?? 0) > 0 ? 300 : undefined
+}
+
+/** Lines the client writes itself: they send no request. */
+const LOCAL_ONLY = /^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr)>/
+
+/** When the request that a transcript line starts began, ms since the epoch; undefined for any other line. */
+// INVARIANT: src/transcript.ts `requestStartFromLine` is the source of this rule (the mod cannot import src/); keep the two in step.
+export function requestStartOf(line: string): number | undefined {
+  if (!line.includes('"user"')) return undefined
+  let rec: any
+  try {
+    rec = JSON.parse(line)
+  } catch {
+    return undefined
+  }
+  if (!rec || rec.type !== 'user' || rec.isSidechain === true) return undefined
+  const content = rec.message?.content
+  const isToolResult = Array.isArray(content) && content.some((b: any) => b && typeof b === 'object' && b.type === 'tool_result')
+  if (!isToolResult) {
+    if (rec.isCompactSummary === true) return undefined
+    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('') : ''
+    if (LOCAL_ONLY.test(text) || text.startsWith('[Request interrupted')) return undefined
+  }
+  const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
+  return Number.isFinite(ts) ? ts : undefined
+}
+
+const MAX_FUTURE_MS = 60_000
+
+/**
+ * A session with no record (resumed: SessionEnd deleted it) read from the tails of its transcript and of keeper's
+ * ledger: the last request start, the bucket of the last write, and a ping that hit after it. Undefined when neither says anything.
+ */
+export function seedOf(transcriptTail: string, ledgerTail: string, sid: string, now: number): Json | undefined {
+  let started: number | undefined
+  let ttlSec: number | undefined
+  const lines = transcriptTail.split('\n')
+  for (let i = lines.length - 1; i >= 0 && (started === undefined || ttlSec === undefined); i--) {
+    const line = lines[i] ?? ''
+    if (started === undefined) started = requestStartOf(line)
+    if (ttlSec === undefined && line.includes('"assistant"') && !line.includes('"isSidechain":true')) {
+      try {
+        ttlSec = ttlOfUsage(JSON.parse(line)?.message?.usage)
+      } catch {
+        // A torn or foreign line says nothing.
+      }
+    }
+  }
+  let hit = 0
+  for (const line of ledgerTail.split('\n')) {
+    if (!line.includes('"wake-hit"') || !line.includes(sid)) continue
+    try {
+      const e = JSON.parse(line)
+      const at = typeof e.t === 'string' ? Date.parse(e.t) : NaN
+      if (e.sessionId === sid && e.event === 'wake-hit' && (num(e.cacheRead) ?? 0) + (num(e.cacheWrite) ?? 0) > 0 && at <= now + MAX_FUTURE_MS) hit = Math.max(hit, at)
+    } catch {
+      // Same.
+    }
+  }
+  const lastRequestAt = Math.max(started ?? 0, hit)
+  if (lastRequestAt === 0) return undefined
+  return { lastRequestAt, ...(ttlSec !== undefined ? { cacheTtlSec: ttlSec } : {}) }
+}
+
+const TAIL_BYTES = 256 * 1024
+
+// Read again only when a file changed size: an idle session refreshes every 30 s, and a tail of 256 KiB is not worth that.
+const tailMemo: Record<string, { size: number; text: string } | undefined> = {}
+
+async function readTail($: $, path: string): Promise<string> {
+  try {
+    const { size } = await $.fs.stat(path)
+    const known = tailMemo[path]
+    if (known?.size === size) return known.text
+    const offset = Math.max(0, size - TAIL_BYTES)
+    const raw = await $.fs.read(path, { offset, length: size - offset })
+    // The cut lands inside a line: drop that partial one.
+    const text = offset > 0 ? raw.slice(raw.indexOf('\n') + 1) : raw
+    tailMemo[path] = { size, text }
+    return text
+  } catch {
+    return ''
+  }
+}
+
+async function seedFor($: $, sid: string, home: string, now: number): Promise<Json | undefined> {
+  try {
+    const { transcriptPath } = await $.session.info()
+    const [transcript, ledger] = await Promise.all([transcriptPath ? readTail($, transcriptPath) : '', readTail($, `${home}/ledger.jsonl`)])
+    return seedOf(transcript, ledger, sid, now)
+  } catch {
+    return undefined
+  }
+}
 
 async function checkNode($: $): Promise<void> {
   try {
@@ -214,8 +346,8 @@ export async function refresh($: $): Promise<void> {
     const failed = errorLine(session, home)
     if (failed !== undefined && shown(config ?? {}, env)) return clear($, failed)
     const now = await $.clock.now()
-    const req = requested
-    const line = lineOf(session, config ?? {}, env, now, tuning, req?.sid === sid ? req.at : undefined)
+    const req = requested?.sid === sid ? requested : undefined
+    const line = lineOf(session ?? (await seedFor($, sid, home, now)), config ?? {}, env, now, tuning, req?.at, req?.ttlSec)
     const offsetMin = new Date(line?.kind === 'cached' ? line.warmUntil : now).getTimezoneOffset()
     if (line !== undefined && bandOn(config ?? {})) {
       // The band draws the line with buttons; the status line would only repeat it.
@@ -245,11 +377,18 @@ export function statusStarted($: $): void {
 /** Run by gate.ts's `turn.step` hook as a main-thread request goes out. */
 export async function statusRequested($: $): Promise<void> {
   try {
-    requested = { sid: await $.session.id(), at: await $.clock.now() }
+    const sid = await $.session.id()
+    requested = { sid, at: await $.clock.now(), ...(requested?.sid === sid && requested.ttlSec !== undefined ? { ttlSec: requested.ttlSec } : {}) }
   } catch {
     return
   }
   await refresh($)
+}
+
+/** Run by gate.ts's `turn.step` hook once a request has answered: its usage says which bucket it wrote. */
+export function statusStepAnswered(usage: unknown): void {
+  const ttlSec = ttlOfUsage(usage)
+  if (ttlSec !== undefined && requested) requested.ttlSec = ttlSec
 }
 
 /** Run by gate.ts's `turn.complete` hook. */

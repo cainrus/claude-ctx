@@ -24,6 +24,10 @@ export interface SessionState {
   /** USD the next turn's prompt costs from a warm cache, and written into a cold one; set at each turn end. */
   warmTurnUsd?: number
   coldTurnUsd?: number
+  /** USD the first turn of a NEW session would cost here (the first request's prompt, written into a 1-hour cache); set once. */
+  coldStartUsd?: number
+  /** The cache bucket of the last turn that wrote one, seconds (300 or 3600); a read-only turn keeps the previous one. */
+  cacheTtlSec?: number
   /** Reset by a real prompt. */
   handoffRequested?: boolean
   /** The open wake is a handoff: its closing Stop checks the brief. */
