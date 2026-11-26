@@ -77,7 +77,7 @@ export const register: Register = on => {
         return { turnId: e.turnId, index: e.index, answer: reason, toolUses: [], stopReason: 'end_turn', usage: null }
       }
     }
-    if (e.agentId === undefined) void statusRequested($)
+    if (e.agentId === undefined) await statusRequested($, e.turnId)
     const step = yield* next(e)
     if (e.agentId === undefined) statusStepAnswered(step?.usage)
     return step

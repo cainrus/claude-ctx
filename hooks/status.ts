@@ -201,7 +201,7 @@ export function nodeOk(version: string): boolean {
 
 let nodeBroken: boolean | undefined
 
-let requested: { sid: string; at: number; ttlSec?: 300 | 3600 } | undefined
+let requested: { sid: string; at: number; turnId?: string; ttlSec?: 300 | 3600 } | undefined
 
 /** The bucket a usage object wrote: from the API's `cache_creation` split, or the same two fields flat (a `turn.step` result). */
 // INVARIANT: src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
@@ -280,15 +280,21 @@ export function statusStarted($: $): void {
   $.clock.every(EVERY_MS, () => refresh($))
 }
 
-/** Run by gate.ts's `turn.step` hook as a main-thread request goes out. */
-export async function statusRequested($: $): Promise<void> {
+/**
+ * Run by gate.ts's `turn.step` hook as a main-thread request goes out, awaited before the request so its answer
+ * finds this request to attach a bucket to. A later request of the same turn keeps the bucket an earlier one wrote,
+ * as record() does for the turn; a new turn starts with none.
+ */
+export async function statusRequested($: $, turnId?: string): Promise<void> {
   try {
     const sid = await $.session.id()
-    requested = { sid, at: await $.clock.now() }
+    const at = await $.clock.now()
+    const sameTurn = turnId !== undefined && requested?.sid === sid && requested.turnId === turnId
+    requested = { sid, at, ...(turnId !== undefined ? { turnId } : {}), ...(sameTurn && requested?.ttlSec !== undefined ? { ttlSec: requested.ttlSec } : {}) }
   } catch {
     return
   }
-  await refresh($)
+  void refresh($)
 }
 
 /** Run by gate.ts's `turn.step` hook once a request has answered: its usage says which bucket it wrote. */

@@ -194,6 +194,21 @@ test('statusStepAnswered gives the bucket a step wrote to the current request on
   assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`)
   // A new request that has not answered yet names no bucket: the 5-minute one of the old request does not carry over.
   await statusRequested($ as never)
+  await refresh($ as never)
+  assert.equal($.shown.at(-1), `◉ ${hhmm(at + H)}`)
+})
+
+test('a later request of the same turn keeps the bucket an earlier one wrote; a new turn does not', async () => {
+  const at = Date.now()
+  const $ = fakeMod({ now: at, sid: 'same-turn', config: { band: false } })
+  await statusRequested($ as never, 't1')
+  statusStepAnswered({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
+  await statusRequested($ as never, 't1')
+  statusStepAnswered({ input_tokens: 1 })
+  await refresh($ as never)
+  assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`)
+  await statusRequested($ as never, 't2')
+  await refresh($ as never)
   assert.equal($.shown.at(-1), `◉ ${hhmm(at + H)}`)
 })
 
@@ -202,10 +217,11 @@ test('a read-only request after a fork that wrote the 1-hour bucket counts 1 hou
   const sid = 'fork-bucket'
   const record = { ctxTokens: 50_000, pingsSoFar: 1, lastTurnEndAt: at - 6 * MIN, cacheAnchorAt: at - 6 * MIN, cacheTtlSec: 3600 }
   const $ = fakeMod({ now: at, sid, config: { band: false }, files: { [`/h/sessions/${sid}.json`]: JSON.stringify(record) } })
-  await statusRequested($ as never)
+  await statusRequested($ as never, 'before-fork')
   statusStepAnswered({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
-  await statusRequested($ as never)
+  await statusRequested($ as never, 'after-fork')
   statusStepAnswered({ input_tokens: 1 })
+  await refresh($ as never)
   assert.ok($.shown.at(-1)!.startsWith(`◉ ${hhmm(at + H)}`), $.shown.at(-1))
 })
 
@@ -325,5 +341,6 @@ test('refresh: a resumed session has no record, so it shows ready until its next
   assert.equal($.shown.at(-1), '○ ready')
   assert.deepEqual($.reads.filter((p) => p.endsWith('transcript.jsonl') || p.endsWith('ledger.jsonl')), [])
   await statusRequested($ as never)
+  await refresh($ as never)
   assert.equal($.shown.at(-1), `◉ ${hhmm(now + H)}`, 'its first request anchors the line')
 })
