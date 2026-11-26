@@ -29,7 +29,7 @@ at API list prices (measured where paid, estimated elsewhere)
 
 ## Ledger events
 
-Every decision is one line in `$CACHE_KEEPER_HOME/ledger.jsonl`:
+Every decision is one line in `$CTX_KEEPER_HOME/ledger.jsonl`:
 
 <!-- gen:ledger-events -->
 | event | one line means |

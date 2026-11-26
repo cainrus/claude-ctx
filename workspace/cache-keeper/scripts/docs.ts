@@ -33,7 +33,7 @@ export const DOCS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'doc
 
 /** The values settingsOf reports with no env and no config.json: the defaults. */
 function defaults(): Map<string, string> {
-  const env = { CACHE_KEEPER_HOME: join(tmpdir(), 'cache-keeper-docs-no-such-home') }
+  const env = { CTX_KEEPER_HOME: join(tmpdir(), 'cache-keeper-docs-no-such-home') }
   return new Map(settingsOf(loadConfig(env), env).map((s) => [s.key, s.value]))
 }
 

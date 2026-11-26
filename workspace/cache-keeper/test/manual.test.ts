@@ -103,7 +103,7 @@ test('settings: each value says whether env, config.json, the tuner or the defau
   const home = tempHome()
   writeFileSync(join(home, 'config.json'), JSON.stringify({ awaySec: 7200, presenceSec: -1, handoff: { enabled: true }, statusLine: false }))
   writeFileSync(join(home, 'tuning.json'), JSON.stringify({ maxPings: 6, computedAt: T0 }))
-  const env = { CACHE_KEEPER_MIN_AGE_SEC: '2900', CACHE_KEEPER_FORK: 'nope' }
+  const env = { CTX_KEEPER_MIN_AGE_SEC: '2900', CTX_KEEPER_FORK: 'nope' }
   const config = configFor(home, env)
   const by = Object.fromEntries(settingsOf(config, env).map((r) => [r.key, r]))
   assert.deepEqual(by.awaySec, { key: 'awaySec', value: '7200', source: 'config.json' })
@@ -130,7 +130,7 @@ test('settings: a set maxPings is not tuned, and long commands are cut', () => {
 test('settings: every value is the one loadConfig resolved', () => {
   const home = tempHome()
   writeFileSync(join(home, 'config.json'), JSON.stringify({ awaySec: 900, hitRatio: 0.8, forkPings: false, handoff: { minCtxTokens: 50_000 } }))
-  const env = { CACHE_KEEPER_PRESENCE_SEC: '200', CACHE_KEEPER_HIT_RATIO: '2', CACHE_KEEPER_DELAY_SEC: '2800', CACHE_KEEPER_HANDOFF: 'on' }
+  const env = { CTX_KEEPER_PRESENCE_SEC: '200', CTX_KEEPER_HIT_RATIO: '2', CTX_KEEPER_DELAY_SEC: '2800', CTX_KEEPER_HANDOFF: 'on' }
   const config = configFor(home, env)
   const by = Object.fromEntries(settingsOf(config, env).map((r) => [r.key, r]))
   assert.equal(by.awaySec.value, String(config.thresholds.awaySec))
@@ -199,12 +199,12 @@ test('ping-now refuses what would ping into nothing', () => {
   answerOf(pingNow, {}, ctxAt(busy.config, T0 + 2 * MIN))
   assert.match((answerOf(pingNow, {}, ctxAt(busy.config, T0 + 3 * MIN)) as any).text, /already on its way/)
 
-  const off = setup({ CACHE_KEEPER_DISABLED: '1' })
+  const off = setup({ CTX_KEEPER_DISABLED: '1' })
   assert.match((answerOf(pingNow, {}, ctxAt(off.config, T0 + 2 * MIN)) as any).text, /keeper is off/)
 })
 
 test('ping-now with forks off passes the turn to the model, as an open manual ping', () => {
-  const { home, config } = setup({ CACHE_KEEPER_FORK: '0' })
+  const { home, config } = setup({ CTX_KEEPER_FORK: '0' })
   assert.deepEqual(answerOf(pingNow, {}, ctxAt(config, T0 + 50 * MIN)), { action: 'pass' })
   const s = loadSession(home, SID)!
   assert.equal(s.pendingPing, true)
@@ -256,9 +256,9 @@ test('status through the gate: blocked, and its Stop is the gate\'s', () => {
 test('status warns about settings that leave keeper unable to ping', () => {
   const home = tempHome()
   assert.deepEqual(configWarnings(configFor(home)), [])
-  assert.match(configWarnings(configFor(home, { CACHE_KEEPER_MIN_AGE_SEC: '3600' }))[0], /no ping is ever due/)
-  assert.match(configWarnings(configFor(home, { CACHE_KEEPER_DELAY_SEC: '600' }))[0], /the Stop sleeper never pings/)
-  const ctx = ctxAt(configFor(home, { CACHE_KEEPER_DELAY_SEC: '600' }), T0)
+  assert.match(configWarnings(configFor(home, { CTX_KEEPER_MIN_AGE_SEC: '3600' }))[0], /no ping is ever due/)
+  assert.match(configWarnings(configFor(home, { CTX_KEEPER_DELAY_SEC: '600' }))[0], /the Stop sleeper never pings/)
+  const ctx = ctxAt(configFor(home, { CTX_KEEPER_DELAY_SEC: '600' }), T0)
   touch({ session_id: SID, prompt: STATUS_COMMAND }, ctx)
   assert.match(JSON.parse(ctx.lines[0]).reason, /warning: delaySec/)
 })
@@ -358,7 +358,7 @@ test('band press: no gate mark, a failed fork is dropped (nothing left open), a 
   assert.equal(answerOf(pingNow, { button: true }, ctxAt(failed.config, T0 + 11 * MIN)).action, 'fork')
 
   // Forks off: refused up front, nothing opened, and keeper's own wake still goes out.
-  const off = setup({ CACHE_KEEPER_FORK: '0' })
+  const off = setup({ CTX_KEEPER_FORK: '0' })
   assert.match((answerOf(pingNow, { button: true }, ctxAt(off.config, T0 + 10 * MIN)) as any).text, /forks are off/)
   const o = loadSession(off.home, SID)!
   assert.equal(o.pendingPing, false)

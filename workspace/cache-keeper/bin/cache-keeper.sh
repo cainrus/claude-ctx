@@ -3,7 +3,7 @@
 # under a `node` on PATH that runs .ts (22.18 or later); without one the hooks
 # do nothing and exit 0. At session start it then says so in every session, and
 # once per machine asks the model to offer setting Node up. Keeper turned off
-# (`"enabled": false` or CACHE_KEEPER_DISABLED=1) stays silent.
+# (`"enabled": false` or CTX_KEEPER_DISABLED=1) stays silent.
 
 # WORKAROUND: Claude Code brings no Node of its own (the native install is one binary)
 # and `/plugin install` checks none, so a missing or old one would fail without a word.
@@ -45,10 +45,10 @@ fi
 # INVARIANT: reads "off" as src/config.ts does (env first, trimmed, any case, and it turns keeper back on over the file;
 # else a top-level "enabled" of false/"false"/"no"/"off"/"0"); nested objects are cut out first (handoff's own "enabled").
 lower() { printf '%s' "$1" | tr -d ' \t' | tr '[:upper:]' '[:lower:]'; }
-home=$(lower "${CACHE_KEEPER_HOME:-}")
-home=${home:+$CACHE_KEEPER_HOME}
-home=${home:-$HOME/.claude-cache-keeper}
-case $(lower "${CACHE_KEEPER_DISABLED:-}") in
+home=$(lower "${CTX_KEEPER_HOME:-}")
+home=${home:+$CTX_KEEPER_HOME}
+home=${home:-$HOME/.claude-ctx/keeper}
+case $(lower "${CTX_KEEPER_DISABLED:-}") in
   1|true|yes|on) exit 0 ;;
   0|false|no|off) ;;
   *)

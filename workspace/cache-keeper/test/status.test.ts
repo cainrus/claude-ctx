@@ -323,7 +323,7 @@ function fakeMod(o: { now: number; files?: Record<string, string>; sid?: string;
     reads,
     session: { id: async () => o.sid ?? SID, info: async () => ({ transcriptPath: '/t/transcript.jsonl' }) },
     clock: { now: async () => o.now },
-    env: { get: async (k: string) => (k === 'CACHE_KEEPER_HOME' ? '/h' : undefined) },
+    env: { get: async (k: string) => (k === 'CTX_KEEPER_HOME' ? '/h' : undefined) },
     fs: {
       stat: async (p: string) => {
         if (!(p in files)) throw new Error('ENOENT')

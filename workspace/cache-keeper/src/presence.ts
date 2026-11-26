@@ -3,8 +3,8 @@
  * counting through a closed lid or a locked screen. Linux: the first that answers of GNOME's Mutter idle monitor,
  * the freedesktop ScreenSaver interface (KDE), `xprintidle` (X11), then logind's idle hint (only with a graphical
  * session). Elsewhere, or when no probe answers, presence is unknown: the `away` row lets the ping through, but the
- * away budget counts it as not at the keyboard. `CACHE_KEEPER_IDLE_SEC` overrides the probe (seconds or `unknown`);
- * `CACHE_KEEPER_BACKGROUND=0|1` forces a session to count as interactive or background.
+ * away budget counts it as not at the keyboard. `CTX_KEEPER_IDLE_SEC` overrides the probe (seconds or `unknown`);
+ * `CTX_KEEPER_BACKGROUND=0|1` forces a session to count as interactive or background.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -19,7 +19,7 @@ export function parseIdleSeconds(ioregOutput: string): number | null {
   return Math.floor(ns / 1_000_000_000)
 }
 
-/** `CACHE_KEEPER_IDLE_SEC`: a number is the idle time; `unknown` or anything non-numeric is null. */
+/** `CTX_KEEPER_IDLE_SEC`: a number is the idle time; `unknown` or anything non-numeric is null. */
 export function parseIdleOverride(raw: string): number | null {
   const n = Number(raw)
   return raw.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
@@ -43,7 +43,7 @@ export interface ProbeOptions {
 
 export function readIdleSeconds(opts: ProbeOptions = {}): number | null {
   const env = opts.env ?? process.env
-  const override = env.CACHE_KEEPER_IDLE_SEC
+  const override = env.CTX_KEEPER_IDLE_SEC
   if (override !== undefined) return parseIdleOverride(override)
   const exec = opts.exec ?? defaultExec
   const platform = opts.platform ?? process.platform
@@ -142,7 +142,7 @@ const KIND_TAIL_BYTES = 16_384
 
 /** A session nobody watches at an input box. */
 export function isBackgroundSession(env: NodeJS.ProcessEnv = process.env, transcriptPath?: string): boolean {
-  const forced = env.CACHE_KEEPER_BACKGROUND
+  const forced = env.CTX_KEEPER_BACKGROUND
   if (forced === '0' || forced === '1') return forced === '1'
   // WARNING: Claude Code starts background sessions with CLAUDE_JOB_DIR and stamps their transcript lines
   // "sessionKind":"bg"; hooks inherit the env var, the transcript is the fallback.

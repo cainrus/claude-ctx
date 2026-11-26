@@ -21,12 +21,12 @@ test('skipIf: a command that cannot run or hangs never vetoes — the ping goes 
 
 test('skipIf: the session facts reach the command as env vars', () => {
   const out = join(tempHome(), 'env.txt')
-  runSkipIf(`printf '%s|%s|%s' "$CACHE_KEEPER_SESSION_ID" "$CACHE_KEEPER_TRANSCRIPT_PATH" "$CACHE_KEEPER_LAST_PROMPT_AT" > '${out}'`, facts)
+  runSkipIf(`printf '%s|%s|%s' "$CTX_KEEPER_SESSION_ID" "$CTX_KEEPER_TRANSCRIPT_PATH" "$CTX_KEEPER_LAST_PROMPT_AT" > '${out}'`, facts)
   assert.equal(readFileSync(out, 'utf8'), `${SID}|/t/x.jsonl|2026-01-01T10:00:00.000Z`)
 })
 
 test('skipIf: unknown facts arrive as empty strings, not "undefined"', () => {
   const out = join(tempHome(), 'env.txt')
-  runSkipIf(`printf '%s|%s' "$CACHE_KEEPER_TRANSCRIPT_PATH" "$CACHE_KEEPER_LAST_PROMPT_AT" > '${out}'`, { sessionId: SID })
+  runSkipIf(`printf '%s|%s' "$CTX_KEEPER_TRANSCRIPT_PATH" "$CTX_KEEPER_LAST_PROMPT_AT" > '${out}'`, { sessionId: SID })
   assert.equal(readFileSync(out, 'utf8'), '|')
 })

@@ -3,7 +3,7 @@
  * is worth sending while you come back warm right after it more often than breakeven (wake cost / rewrite avoided,
  * both measured from the ledger). Once a day, with at least 30 pings at the cap's position in the last 60 days,
  * the cap goes up a step when that position kept 2× breakeven warm and down a step below breakeven, within [2, 8].
- * The decision is kept in `$CACHE_KEEPER_HOME/tuning.json`; `cache-keeper report` prints the cap and why.
+ * The decision is kept in `$CTX_KEEPER_HOME/tuning.json`; `cache-keeper report` prints the cap and why.
  */
 
 import { join } from 'node:path'

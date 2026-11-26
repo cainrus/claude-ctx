@@ -20,7 +20,7 @@ export function waitCommand(script: string): string {
   // WORKAROUND: under `claude -p` (sdk-cli) async hooks are not backgrounded, so the sleep would hold a one-shot run open.
   return (
     `[ "$CLAUDE_CODE_ENTRYPOINT" = sdk-cli ] || ` +
-    `{ sleep "\${CACHE_KEEPER_DELAY_SEC:-${DEFAULT_DELAY_SEC}}"; ${LAUNCH} ${script} wake; }`
+    `{ sleep "\${CTX_KEEPER_DELAY_SEC:-${DEFAULT_DELAY_SEC}}"; ${LAUNCH} ${script} wake; }`
   )
 }
 

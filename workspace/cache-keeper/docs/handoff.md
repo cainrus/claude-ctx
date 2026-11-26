@@ -8,14 +8,14 @@ Back while the cache is still warm, nothing is asked. Back after it went
 cold, your prompt is held before it reaches the model and a menu offers: send it again (or `1`) to continue
 here, or `2` to start a new session from the brief plus your message (`handoff.spawnCommand`;
 `handoff.closeAfterSpawn` closes this one). Where the plugin's mod loads, `!` commands, slash commands and
-`/compact` are held the same way. Off by default: turn on with `handoff.enabled` or `CACHE_KEEPER_HANDOFF=1`.
+`/compact` are held the same way. Off by default: turn on with `handoff.enabled` or `CTX_KEEPER_HANDOFF=1`.
 <!-- /gen:module -->
 
 The menu, on the first prompt into a cold cache:
 
 ```
 cache-keeper: this session's prompt cache has gone cold (idle 2h 10m); the next turn re-sends ~151k tokens (≈ $1.51).
-A handoff brief was written before it expired: ~/.claude-cache-keeper/handoffs/<session>.md
+A handoff brief was written before it expired: ~/.claude-ctx/keeper/handoffs/<session>.md
   Enter  send the same message again to continue here (or type 1)
   2      continue in a new session from the brief, with your message; this session closes
 Your message is held and is back in the input box. Nothing was sent to the model.
@@ -45,11 +45,11 @@ Keys of the `handoff` block in `config.json`:
 <!-- gen:handoff-settings -->
 | key | env | default | meaning |
 |---|---|---|---|
-| `enabled` | `CACHE_KEEPER_HANDOFF` | `false` | write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](handoff.md)) |
-| `minCtxTokens` | `CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS` | `120000` | below this a brief saves too little |
-| `spawnCommand` | `CACHE_KEEPER_HANDOFF_SPAWN` | — | shell command starting a new session; gets `CACHE_KEEPER_BRIEF`, `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_TRANSCRIPT_PATH`, `CACHE_KEEPER_CWD`; 45 s at most |
-| `closeAfterSpawn` | `CACHE_KEEPER_HANDOFF_CLOSE` | `true` | close the old session after a successful spawn |
-| `closeCommand` | — | SIGTERM to the session's `claude` | how to close it; gets `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_CLAUDE_PID` |
+| `enabled` | `CTX_KEEPER_HANDOFF` | `false` | write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](handoff.md)) |
+| `minCtxTokens` | `CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS` | `120000` | below this a brief saves too little |
+| `spawnCommand` | `CTX_KEEPER_HANDOFF_SPAWN` | — | shell command starting a new session; gets `CTX_KEEPER_BRIEF`, `CTX_KEEPER_SESSION_ID`, `CTX_KEEPER_TRANSCRIPT_PATH`, `CTX_KEEPER_CWD`; 45 s at most |
+| `closeAfterSpawn` | `CTX_KEEPER_HANDOFF_CLOSE` | `true` | close the old session after a successful spawn |
+| `closeCommand` | — | SIGTERM to the session's `claude` | how to close it; gets `CTX_KEEPER_SESSION_ID`, `CTX_KEEPER_CLAUDE_PID` |
 <!-- /gen:handoff-settings -->
 
-Example: `"spawnCommand": "claude-new-session --prompt-file \"$CACHE_KEEPER_BRIEF\" --cwd \"$CACHE_KEEPER_CWD\""`.
+Example: `"spawnCommand": "claude-new-session --prompt-file \"$CTX_KEEPER_BRIEF\" --cwd \"$CTX_KEEPER_CWD\""`.

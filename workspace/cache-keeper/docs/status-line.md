@@ -22,7 +22,7 @@ Every form it takes, printed by the real `format()`:
 - `○ cold · ↺277k=98¢`: the cache went cold; the next turn writes the whole context, 277k tokens, anew at $0.98. Switching model costs nothing extra now.
 - `○ cold · ↺277k=98¢ ⇄≥30¢`: the same, and a new session would pay at least $0.30 for its first turn (its start prompt, written anew; the brief and the files it rereads come on top): the floor of a handoff, shown only when it is cheaper.
 - `error: needs Node.js ≥ 22.18`: `node` on `PATH` is missing or too old to run the hooks, so keeper does nothing.
-- `error: record failed · ~/.claude-cache-keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/ctx:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
+- `error: record failed · ~/.claude-ctx/keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/ctx:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
 - `(nothing)`: keeper is off, or `"statusLine": false`.
 <!-- /gen:status-lines -->
 
@@ -30,7 +30,7 @@ Every form it takes, printed by the real `format()`:
 
 <!-- gen:module src/errors.ts -->
 A hook that fails never breaks your session; it leaves three traces instead: a line in
-`$CACHE_KEEPER_HOME/errors.log` (rotated to errors.log.1 past 256 KB), an `error` event that `report` counts,
+`$CTX_KEEPER_HOME/errors.log` (rotated to errors.log.1 past 256 KB), an `error` event that `report` counts,
 and `error: <hook> failed` on the status line until a turn is recorded cleanly again. Without the status line,
 the session's next prompt gets one notice, at most once an hour.
 <!-- /gen:module -->

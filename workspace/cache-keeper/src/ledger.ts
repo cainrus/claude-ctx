@@ -1,4 +1,4 @@
-/** Every decision is one line appended to `$CACHE_KEEPER_HOME/ledger.jsonl`, which `cache-keeper report` reads. */
+/** Every decision is one line appended to `$CTX_KEEPER_HOME/ledger.jsonl`, which `cache-keeper report` reads. */
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'

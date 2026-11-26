@@ -5,7 +5,7 @@
  * fails is sent again, then falls back to a wake turn while the cache can still be reached warm. Forks also
  * hold the cache while a question (AskUserQuestion) waits for your answer, and `/ctx:ping` uses one.
  * Without the mod (an older Claude Code, mods off) pings are wake turns as before.
- * Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
+ * Off: `"forkPings": false` or `CTX_KEEPER_FORK=0`.
  */
 
 import { decideWake, MANUAL_FORK_MAX_MS, pingInFlight, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'

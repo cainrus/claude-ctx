@@ -58,23 +58,23 @@ export function settingsOf(config: Config, env: NodeJS.ProcessEnv, cap = effecti
   const rows: Setting[] = []
   const add = (key: string, value: unknown, source: Source) => rows.push({ key, value: shortValue(value), source })
 
-  add('enabled', config.enabled, sourceOf(bool, env.CACHE_KEEPER_DISABLED, file.enabled))
+  add('enabled', config.enabled, sourceOf(bool, env.CTX_KEEPER_DISABLED, file.enabled))
   for (const key of Object.keys(THRESHOLDS) as Array<keyof Thresholds>) {
     const fromEnvOrFile = sourceOf(num, env[THRESHOLD_ENV[key]], file[key])
     if (key === 'maxPings') add(key, cap.value, cap.source ?? fromEnvOrFile)
     else add(key, config.thresholds[key], fromEnvOrFile)
   }
-  add('hitRatio', config.hitRatio, sourceOf(ratio, env.CACHE_KEEPER_HIT_RATIO, file.hitRatio))
+  add('hitRatio', config.hitRatio, sourceOf(ratio, env.CTX_KEEPER_HIT_RATIO, file.hitRatio))
   add('cacheTtlSec', config.cacheTtlSec, sourceOf(num, undefined, file.cacheTtlSec))
-  add('delaySec', config.delaySec, sourceOf(num, env.CACHE_KEEPER_DELAY_SEC, undefined))
-  add('forkPings', config.forkPings, sourceOf(bool, env.CACHE_KEEPER_FORK, file.forkPings))
+  add('delaySec', config.delaySec, sourceOf(num, env.CTX_KEEPER_DELAY_SEC, undefined))
+  add('forkPings', config.forkPings, sourceOf(bool, env.CTX_KEEPER_FORK, file.forkPings))
   add('statusLine', file.statusLine !== false, file.statusLine === false ? 'config.json' : 'default')
   add('band', file.band !== false, file.band === false ? 'config.json' : 'default')
-  add('skipIf', config.skipIf, sourceOf(str, env.CACHE_KEEPER_SKIP_IF, file.skipIf))
-  add('handoff.enabled', config.handoff.enabled, sourceOf(bool, env.CACHE_KEEPER_HANDOFF, handoff.enabled))
-  add('handoff.minCtxTokens', config.handoff.minCtxTokens, sourceOf(num, env.CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS, handoff.minCtxTokens))
-  add('handoff.spawnCommand', config.handoff.spawnCommand, sourceOf(str, env.CACHE_KEEPER_HANDOFF_SPAWN, handoff.spawnCommand))
-  add('handoff.closeAfterSpawn', config.handoff.closeAfterSpawn, sourceOf(bool, env.CACHE_KEEPER_HANDOFF_CLOSE, handoff.closeAfterSpawn))
+  add('skipIf', config.skipIf, sourceOf(str, env.CTX_KEEPER_SKIP_IF, file.skipIf))
+  add('handoff.enabled', config.handoff.enabled, sourceOf(bool, env.CTX_KEEPER_HANDOFF, handoff.enabled))
+  add('handoff.minCtxTokens', config.handoff.minCtxTokens, sourceOf(num, env.CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS, handoff.minCtxTokens))
+  add('handoff.spawnCommand', config.handoff.spawnCommand, sourceOf(str, env.CTX_KEEPER_HANDOFF_SPAWN, handoff.spawnCommand))
+  add('handoff.closeAfterSpawn', config.handoff.closeAfterSpawn, sourceOf(bool, env.CTX_KEEPER_HANDOFF_CLOSE, handoff.closeAfterSpawn))
   return rows
 }
 

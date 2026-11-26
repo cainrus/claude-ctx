@@ -16,7 +16,7 @@ export function tempHome(): string {
 }
 
 export function configFor(home: string, env: Record<string, string> = {}): Config {
-  return loadConfig({ HOME: '/nonexistent', CACHE_KEEPER_HOME: home, ...env })
+  return loadConfig({ HOME: '/nonexistent', CTX_KEEPER_HOME: home, ...env })
 }
 
 export interface TestCtx extends Ctx {

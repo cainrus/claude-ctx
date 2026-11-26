@@ -14,8 +14,8 @@ claude plugin marketplace add cainrus/claude-ctx
 claude plugin install ctx@claude-ctx
 ```
 
-State, ledger and `config.json` live in `~/.claude-cache-keeper` (`CACHE_KEEPER_HOME`); every setting is a
-`CACHE_KEEPER_*` variable. The commands are `/ctx:done`, `/ctx:status` and `/ctx:ping`.
+State, ledger and `config.json` live in `~/.claude-ctx/keeper` (`CTX_KEEPER_HOME`); every setting is a
+`CTX_KEEPER_*` variable. The commands are `/ctx:done`, `/ctx:status` and `/ctx:ping`.
 
 ## Docs
 

@@ -22,8 +22,8 @@ const TAG = '<command-message>ctx:ping</command-message>\n<command-name>/ctx:pin
 
 /** The CLI's env: this test's home, none of the runner's own keeper settings. */
 function cliEnv(home: string, extra: Record<string, string>): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { HOME: '/nonexistent', CACHE_KEEPER_HOME: home, ...extra }
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('CACHE_KEEPER_') && !(k in env)) env[k] = v
+  const env: NodeJS.ProcessEnv = { HOME: '/nonexistent', CTX_KEEPER_HOME: home, ...extra }
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('CTX_KEEPER_') && !(k in env)) env[k] = v
   return env
 }
 
@@ -137,8 +137,8 @@ test('manualPing: a failed fork lets the turn reach the model, and its Stop logs
 })
 
 test('manualPing: with forks off, the command turn itself is the ping', async () => {
-  const { home } = session(5, { CACHE_KEEPER_FORK: '0' })
-  const { $, calls } = fakeEngine(home, HIT, { CACHE_KEEPER_FORK: '0' })
+  const { home } = session(5, { CTX_KEEPER_FORK: '0' })
+  const { $, calls } = fakeEngine(home, HIT, { CTX_KEEPER_FORK: '0' })
   assert.equal(await manualPing($), undefined)
   assert.deepEqual(calls, ['ping-now'])
   const s = loadSession(home, SID)!
@@ -213,7 +213,7 @@ test('gate: a message that quotes the marker or the tag still reaches the model'
 })
 
 test('gate: AskUserQuestion holds the cache by fork while the person answers, and stops after', async () => {
-  const { home } = session(5, { CACHE_KEEPER_FORK: '1' })
+  const { home } = session(5, { CTX_KEEPER_FORK: '1' })
   const { $, calls } = fakeEngine(home, HIT, { CLAUDE_CODE_ENTRYPOINT: 'cli' })
   const timers: Array<{ ms: number; cancelled: boolean }> = []
   $.clock.after = ((ms: number) => {
@@ -246,7 +246,7 @@ test('gate: a turn.step result that names a 5-minute write makes the status line
   const $ = {
     ...base,
     clock: { ...base.clock, now: async () => now },
-    env: { get: async (k: string) => (k === 'CACHE_KEEPER_HOME' ? home : undefined) },
+    env: { get: async (k: string) => (k === 'CTX_KEEPER_HOME' ? home : undefined) },
     fs: { read: async (p: string) => readFileSync(p, 'utf8') },
     ui: { status: (t?: string) => void shown.push(t), invalidate: () => {} },
   }

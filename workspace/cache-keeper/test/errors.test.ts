@@ -87,7 +87,7 @@ test('cli: a hook that throws exits 0 and leaves the trace', () => {
   const r = spawnSync(process.execPath, [join(ROOT, 'bin/cache-keeper.ts'), 'record'], {
     input: JSON.stringify({ session_id: SID, transcript_path: transcript }),
     encoding: 'utf8',
-    env: { PATH: process.env.PATH ?? '', HOME: home, CACHE_KEEPER_HOME: home },
+    env: { PATH: process.env.PATH ?? '', HOME: home, CTX_KEEPER_HOME: home },
   })
   assert.equal(r.status, 0)
   assert.ok(existsSync(errorLogPath(home)), r.stderr)

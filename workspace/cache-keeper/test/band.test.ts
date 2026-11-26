@@ -90,8 +90,8 @@ test('the band is on unless config says "band": false', () => {
 function fakeEngine(home: string) {
   const toasts: string[] = []
   let redraws = 0
-  const cliEnv: NodeJS.ProcessEnv = { HOME: '/nonexistent', CACHE_KEEPER_HOME: home }
-  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('CACHE_KEEPER_') && !(k in cliEnv)) cliEnv[k] = v
+  const cliEnv: NodeJS.ProcessEnv = { HOME: '/nonexistent', CTX_KEEPER_HOME: home }
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith('CTX_KEEPER_') && !(k in cliEnv)) cliEnv[k] = v
   const $ = {
     plugin: { root: PLUGIN_ROOT },
     session: { id: async () => SID },

@@ -197,7 +197,7 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
   },
   { text: NODE_ERROR, meaning: '`node` on `PATH` is missing or too old to run the hooks, so keeper does nothing' },
   {
-    text: errorLine({ lastError: { cmd: 'record' } }, '~/.claude-cache-keeper') ?? '',
+    text: errorLine({ lastError: { cmd: 'record' } }, '~/.claude-ctx/keeper') ?? '',
     meaning:
       'a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is ' +
       'logged there, counted by `report`, shown by `/ctx:status`, and, without mods, told once an hour on ' +
@@ -249,7 +249,7 @@ async function readJson($: $, path: string): Promise<Json | undefined> {
 export async function refresh($: $): Promise<void> {
   try {
     const sid = await $.session.id()
-    const home = (await $.env.get('CACHE_KEEPER_HOME')) ?? `${await $.env.get('HOME')}/.claude-cache-keeper`
+    const home = (await $.env.get('CTX_KEEPER_HOME')) ?? `${await $.env.get('HOME')}/.claude-ctx/keeper`
     if (!/^[A-Za-z0-9_-]+$/.test(sid)) return clear($, undefined)
     const [session, config, tuning] = await Promise.all([
       readJson($, `${home}/sessions/${sid}.json`),
@@ -257,10 +257,10 @@ export async function refresh($: $): Promise<void> {
       readJson($, `${home}/tuning.json`),
     ])
     const env = {
-      maxPings: await $.env.get('CACHE_KEEPER_MAX_PINGS'),
-      minCtxTokens: await $.env.get('CACHE_KEEPER_MIN_CTX_TOKENS'),
-      minAgeSec: await $.env.get('CACHE_KEEPER_MIN_AGE_SEC'),
-      disabled: await $.env.get('CACHE_KEEPER_DISABLED'),
+      maxPings: await $.env.get('CTX_KEEPER_MAX_PINGS'),
+      minCtxTokens: await $.env.get('CTX_KEEPER_MIN_CTX_TOKENS'),
+      minAgeSec: await $.env.get('CTX_KEEPER_MIN_AGE_SEC'),
+      disabled: await $.env.get('CTX_KEEPER_DISABLED'),
     }
     // Errors stay on the status line even with the band on: it is the one place every surface shows.
     if (nodeBroken) return clear($, shown(config ?? {}, env) ? NODE_ERROR : undefined)

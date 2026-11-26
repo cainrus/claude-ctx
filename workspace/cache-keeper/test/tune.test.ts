@@ -89,7 +89,7 @@ test('tunedMaxPings: ledger lines older than the window do not count', () => {
 test('wake: an explicit maxPings turns the tuner off', () => {
   const home = tempHome()
   for (const e of stretches(40, 4, true, 'w')) appendLedger(home, e)
-  const config = configFor(home, { CACHE_KEEPER_MAX_PINGS: '4' })
+  const config = configFor(home, { CTX_KEEPER_MAX_PINGS: '4' })
   assert.equal(config.maxPingsAuto, false)
   saveSession(home, { ...newSession(SID), lastTurnEndAt: T0, ctxTokens: 100_000, pingsSoFar: 4 })
   assert.equal(wake({ session_id: SID }, makeCtx(config, T0 + (T.minAgeSec + 60) * 1000)), 0)

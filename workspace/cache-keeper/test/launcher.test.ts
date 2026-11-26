@@ -35,7 +35,7 @@ function launch(sub: string, path: string, home = tempHome(), env: Record<string
   return spawnSync('sh', [LAUNCHER, sub], {
     input,
     encoding: 'utf8',
-    env: { PATH: path, HOME: home, CACHE_KEEPER_HOME: home, ...env },
+    env: { PATH: path, HOME: home, CTX_KEEPER_HOME: home, ...env },
     timeout: 30_000,
   })
 }
@@ -108,7 +108,7 @@ test('launcher: no note, and no ask spent, outside a fresh interactive start', (
 
 test('launcher: keeper turned off keeps check quiet, as src/config.ts reads it', () => {
   for (const off of ['1', 'True', ' YES ', 'on']) {
-    const r = launch('check', pathWith(undefined), tempHome(), { CACHE_KEEPER_DISABLED: off })
+    const r = launch('check', pathWith(undefined), tempHome(), { CTX_KEEPER_DISABLED: off })
     assert.equal(r.status, 0)
     assert.equal(r.stdout, '', off)
   }
@@ -117,7 +117,7 @@ test('launcher: keeper turned off keeps check quiet, as src/config.ts reads it',
   assert.equal(launch('check', pathWith(undefined), home).stdout, '')
   // handoff's own "enabled": false is not keeper's.
   // The env wins over the file, both ways, as in src/config.ts.
-  assert.ok(JSON.parse(launch('check', pathWith(undefined), home, { CACHE_KEEPER_DISABLED: ' Off ' }).stdout).systemMessage)
+  assert.ok(JSON.parse(launch('check', pathWith(undefined), home, { CTX_KEEPER_DISABLED: ' Off ' }).stdout).systemMessage)
   const quoted = tempHome()
   writeFileSync(join(quoted, 'config.json'), '{"enabled":"OFF"}')
   assert.equal(launch('check', pathWith(undefined), quoted).stdout, '')
@@ -132,11 +132,11 @@ test('launcher: keeper turned off keeps check quiet, as src/config.ts reads it',
   }
 })
 
-test('launcher: a blank CACHE_KEEPER_HOME means the default, as in src/config.ts', () => {
+test('launcher: a blank CTX_KEEPER_HOME means the default, as in src/config.ts', () => {
   const home = tempHome()
-  const r = launch('check', pathWith(undefined), home, { CACHE_KEEPER_HOME: '  ' })
+  const r = launch('check', pathWith(undefined), home, { CTX_KEEPER_HOME: '  ' })
   assert.ok(noteOf(r))
-  assert.equal(readFileSync(join(home, '.claude-cache-keeper', 'node-asked'), 'utf8'), 'none\n')
+  assert.equal(readFileSync(join(home, '.claude-ctx/keeper', 'node-asked'), 'utf8'), 'none\n')
 })
 
 test('launcher: a home that cannot be made still says why, without the note', () => {

@@ -58,7 +58,7 @@ test('ledger appends whole lines and skips garbage on read', () => {
 
 test('config: defaults, then config.json, then env', () => {
   const home = tempHome()
-  const base = { HOME: '/nonexistent', CACHE_KEEPER_HOME: home }
+  const base = { HOME: '/nonexistent', CTX_KEEPER_HOME: home }
   assert.deepEqual(loadConfig(base).thresholds, { ...THRESHOLDS })
   assert.equal(loadConfig(base).enabled, true)
 
@@ -70,14 +70,14 @@ test('config: defaults, then config.json, then env', () => {
   assert.equal(fromFile.prices.opus.input, 15, 'the pre-0.6.6 number form: the input price')
   assert.equal(fromFile.prices.opus.cacheWrite, 30)
 
-  const fromEnv = loadConfig({ ...base, [THRESHOLD_ENV.maxPings]: '7', CACHE_KEEPER_DISABLED: '0', CACHE_KEEPER_HIT_RATIO: '0.8' })
+  const fromEnv = loadConfig({ ...base, [THRESHOLD_ENV.maxPings]: '7', CTX_KEEPER_DISABLED: '0', CTX_KEEPER_HIT_RATIO: '0.8' })
   assert.equal(fromEnv.thresholds.maxPings, 7)
   assert.equal(fromEnv.enabled, true)
   assert.equal(fromEnv.hitRatio, 0.8)
 })
 
 test('config: home defaults under $HOME, a bad hit ratio falls back', () => {
-  const c = loadConfig({ HOME: '/home/user', CACHE_KEEPER_HIT_RATIO: '5' })
-  assert.equal(c.home, '/home/user/.claude-cache-keeper')
+  const c = loadConfig({ HOME: '/home/user', CTX_KEEPER_HIT_RATIO: '5' })
+  assert.equal(c.home, '/home/user/.claude-ctx/keeper')
   assert.equal(c.hitRatio, 0.9)
 })

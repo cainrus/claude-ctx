@@ -14,8 +14,8 @@ import { assistantLine, configFor, makeCtx, MIN, SID, tempHome } from './helpers
 const T0 = Date.parse('2026-01-01T10:00:00.000Z')
 const PRE = 150_000
 const BRIEF = `Goal: ship the handoff.\n${'Decisions and state of the work. '.repeat(20)}\nNext step: run the tests.`
-const HANDOFF_ENV = { CACHE_KEEPER_HANDOFF: '1' }
-const SPAWN_ENV = { ...HANDOFF_ENV, CACHE_KEEPER_HANDOFF_SPAWN: 'start-new' }
+const HANDOFF_ENV = { CTX_KEEPER_HANDOFF: '1' }
+const SPAWN_ENV = { ...HANDOFF_ENV, CTX_KEEPER_HANDOFF_SPAWN: 'start-new' }
 const HOUR = 60 * MIN
 
 /** A transcript in a project dir, like Claude Code writes. */
@@ -183,11 +183,11 @@ test('touch: `2` spawns a new session from brief + held message, then closes thi
   assert.equal(out.spawns.length, 1)
   const { command, env } = out.spawns[0]
   assert.equal(command, 'start-new')
-  assert.equal(env.CACHE_KEEPER_BRIEF, continuePath(home, SID))
-  assert.equal(env.CACHE_KEEPER_SESSION_ID, SID)
-  assert.equal(env.CACHE_KEEPER_TRANSCRIPT_PATH, transcript)
-  assert.equal(env.CACHE_KEEPER_CWD, '/home/user/project')
-  const brief = readFileSync(env.CACHE_KEEPER_BRIEF, 'utf8')
+  assert.equal(env.CTX_KEEPER_BRIEF, continuePath(home, SID))
+  assert.equal(env.CTX_KEEPER_SESSION_ID, SID)
+  assert.equal(env.CTX_KEEPER_TRANSCRIPT_PATH, transcript)
+  assert.equal(env.CTX_KEEPER_CWD, '/home/user/project')
+  const brief = readFileSync(env.CTX_KEEPER_BRIEF, 'utf8')
   assert.ok(brief.startsWith('Goal: ship the handoff.'))
   assert.match(brief, /## The user's message on return\n\nwhat next\?/)
   assert.deepEqual(out.closes, [SID])
@@ -305,7 +305,7 @@ test('touch: a prompt into the cold cache of an auto handoff starts the new sess
   const { home, back, out } = autoReady()
   touch({ session_id: SID, prompt: 'status of the build?' }, back)
   assert.equal(out.spawns.length, 1)
-  assert.match(readFileSync(out.spawns[0].env.CACHE_KEEPER_BRIEF, 'utf8'), /## The user's message on return\n\nstatus of the build\?/)
+  assert.match(readFileSync(out.spawns[0].env.CTX_KEEPER_BRIEF, 'utf8'), /## The user's message on return\n\nstatus of the build\?/)
   assert.deepEqual(out.closes, [SID])
   assert.equal(out.json.length, 1)
   assert.equal(out.json[0].decision, 'block')
@@ -411,7 +411,7 @@ test('touch: without a spawn command, `2` only writes the file and closes nothin
 })
 
 test('touch: closeAfterSpawn off — spawned, not closed', () => {
-  const { config, briefAt } = handedOff({ ...SPAWN_ENV, CACHE_KEEPER_HANDOFF_CLOSE: '0' })
+  const { config, briefAt } = handedOff({ ...SPAWN_ENV, CTX_KEEPER_HANDOFF_CLOSE: '0' })
   const { ctx, out } = touchCtx(config, briefAt + 2 * HOUR)
   touch({ session_id: SID, prompt: 'what next?' }, ctx)
   touch({ session_id: SID, prompt: '2' }, ctx)

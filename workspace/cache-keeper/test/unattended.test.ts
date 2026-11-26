@@ -21,7 +21,7 @@ const T0 = Date.parse('2026-01-01T10:00:00.000Z')
 const PRE = 150_000
 const HOUR = 60 * MIN
 const BRIEF = `Goal: ship it.\n${'Decisions and state of the work. '.repeat(20)}\nNext step: run the tests.`
-const SPAWN_ENV = { CACHE_KEEPER_HANDOFF: '1', CACHE_KEEPER_HANDOFF_SPAWN: 'start-new' }
+const SPAWN_ENV = { CTX_KEEPER_HANDOFF: '1', CTX_KEEPER_HANDOFF_SPAWN: 'start-new' }
 
 const PEER =
   '<cross-session-message from="uds:/tmp/cc-socks/76200.sock" from-name="night lead" from-mode="prompting">\n' +
@@ -169,6 +169,6 @@ test('isBackgroundSession: the job dir of a background session, else the transcr
   assert.equal(isBackgroundSession({}, fg), false)
   assert.equal(isBackgroundSession({}, join(dir, 'missing.jsonl')), false)
   assert.equal(isBackgroundSession({ CLAUDE_JOB_DIR: '' }), false)
-  assert.equal(isBackgroundSession({ CLAUDE_JOB_DIR: '/x', CACHE_KEEPER_BACKGROUND: '0' }), false, 'override off')
-  assert.equal(isBackgroundSession({ CACHE_KEEPER_BACKGROUND: '1' }, fg), true, 'override on')
+  assert.equal(isBackgroundSession({ CLAUDE_JOB_DIR: '/x', CTX_KEEPER_BACKGROUND: '0' }), false, 'override off')
+  assert.equal(isBackgroundSession({ CTX_KEEPER_BACKGROUND: '1' }, fg), true, 'override on')
 })

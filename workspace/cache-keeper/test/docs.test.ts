@@ -6,7 +6,7 @@ import { GENERATORS, render, staleDocs } from '../scripts/docs.ts'
 import { loadConfig, SETTINGS } from '../src/config.ts'
 import { settingsOf } from '../src/inspect.ts'
 
-const NO_HOME = { CACHE_KEEPER_HOME: join(tmpdir(), 'cache-keeper-docs-test-no-home') }
+const NO_HOME = { CTX_KEEPER_HOME: join(tmpdir(), 'cache-keeper-docs-test-no-home') }
 
 test('the docs match the code: run `node scripts/docs.ts` after changing SETTINGS, STATUS_EXAMPLES or LEDGER_EVENTS', () => {
   assert.deepEqual(staleDocs(), [])
@@ -16,7 +16,7 @@ test('every setting /ctx:status reports is documented, and every documented key 
   const reported = settingsOf(loadConfig(NO_HOME), NO_HOME).map((s) => s.key)
   const documented = SETTINGS.flatMap((s) => (s.key === undefined ? [] : [s.key]))
   // env-only settings status still names by their Config field
-  const envOnly: Record<string, string> = { delaySec: 'CACHE_KEEPER_DELAY_SEC' }
+  const envOnly: Record<string, string> = { delaySec: 'CTX_KEEPER_DELAY_SEC' }
   for (const key of reported) {
     const covered = documented.includes(key) || SETTINGS.some((s) => s.key === undefined && s.env === envOnly[key])
     assert.ok(covered, `${key} is reported but not in SETTINGS`)

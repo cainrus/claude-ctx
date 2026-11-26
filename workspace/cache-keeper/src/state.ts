@@ -1,4 +1,4 @@
-/** On-disk state under `$CACHE_KEEPER_HOME`: `sessions/`, `forks/`, `away-budget.json`. */
+/** On-disk state under `$CTX_KEEPER_HOME`: `sessions/`, `forks/`, `away-budget.json`. */
 
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'

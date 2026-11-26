@@ -24,7 +24,7 @@
           },
           {
             "type": "command",
-            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = sdk-cli ] || { sleep \"${CACHE_KEEPER_DELAY_SEC:-3000}\"; sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" wake; }",
+            "command": "[ \"$CLAUDE_CODE_ENTRYPOINT\" = sdk-cli ] || { sleep \"${CTX_KEEPER_DELAY_SEC:-3000}\"; sh \"${CLAUDE_PLUGIN_ROOT}/workspace/cache-keeper/bin/cache-keeper.sh\" wake; }",
             "asyncRewake": true,
             "timeout": 7200
           }

@@ -71,7 +71,7 @@ test('arm: the mod claims the stretch and the Stop sleeper stands down', () => {
 })
 
 test('arm: forks switched off leave the stretch to the wake turn', () => {
-  const { home, config } = setup({ CACHE_KEEPER_FORK: '0' })
+  const { home, config } = setup({ CTX_KEEPER_FORK: '0' })
   assert.deepEqual(call((i, c) => arm(i, c, INTERACTIVE), {}, ctxAt(config, T0 + 1000)), { action: 'none' })
   assert.equal(loadForkClaim(home, SID), undefined)
   assert.equal(wake({ session_id: SID }, ctxAt(config, T0 + DUE)), 2)
@@ -474,7 +474,7 @@ test('wait: a fork that comes back after the answer is scored, and arms nothing 
 })
 
 test('wait: a fork parked on its retry is closed by the answer; no handoff starts during a wait', () => {
-  const { home, config } = setup({ CACHE_KEEPER_HANDOFF: '1', CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS: '1000' })
+  const { home, config } = setup({ CTX_KEEPER_HANDOFF: '1', CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS: '1000' })
   const asked = T0 + 6 * MIN
   waitStart({ session_id: SID }, ctxAt(config, asked), INTERACTIVE)
   assert.equal(call(forkWake, {}, ctxAt(config, asked + DUE)).action, 'fork')
@@ -510,7 +510,7 @@ test('wait: a fork parked on its retry is closed by the answer; no handoff start
 })
 
 test('wait: off without forks, for a session never recorded, and under claude -p', () => {
-  const { home, config } = setup({ CACHE_KEEPER_FORK: '0' })
+  const { home, config } = setup({ CTX_KEEPER_FORK: '0' })
   assert.deepEqual(call(waitStart, {}, ctxAt(config, T0 + MIN)), { action: 'none' })
   assert.equal(loadSession(home, SID)!.waitingSince, undefined)
   const on = setup()

@@ -124,7 +124,7 @@ test('record: the hit ratio threshold is inclusive and configurable', () => {
   const transcript = writeTranscript(home, [{ at: T0, read: 90, write: 10 }])
   for (const [ratio, hit] of [['0.9', true], ['0.91', false]] as const) {
     saveSession(home, { ...newSession(SID), pendingPing: true })
-    record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home, { CACHE_KEEPER_HIT_RATIO: ratio }), T0))
+    record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home, { CTX_KEEPER_HIT_RATIO: ratio }), T0))
     assert.equal(loadSession(home, SID)!.lastPingHit, hit, `ratio ${ratio}`)
   }
 })
@@ -179,7 +179,7 @@ test('wake: no state (session ended) or no session id exits 0', () => {
 
 test('wake: disabled by env exits 0 without touching anything', () => {
   const { home } = setup()
-  const ctx = makeCtx(configFor(home, { CACHE_KEEPER_DISABLED: '1' }), T0 + WARM_ENOUGH)
+  const ctx = makeCtx(configFor(home, { CTX_KEEPER_DISABLED: '1' }), T0 + WARM_ENOUGH)
   assert.equal(wake({ session_id: SID }, ctx), 0)
   assert.deepEqual(readLedger(home), [])
 })
@@ -385,7 +385,7 @@ test('done: blocks the command, mutes the session and keeps the stretch open', (
 })
 
 test('done: the next wake is refused with reason done, and no handoff is asked', () => {
-  const { home, config } = setup({ CACHE_KEEPER_HANDOFF: '1', CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS: '1' })
+  const { home, config } = setup({ CTX_KEEPER_HANDOFF: '1', CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS: '1' })
   touch({ session_id: SID, prompt: '/ctx:done' }, makeCtx(config, T0 + MIN))
   const ctx = makeCtx(config, T0 + WARM_ENOUGH, T.awaySec + 1)
   assert.equal(wake({ session_id: SID }, ctx), 0)

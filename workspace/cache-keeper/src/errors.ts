@@ -1,6 +1,6 @@
 /**
  * A hook that fails never breaks your session; it leaves three traces instead: a line in
- * `$CACHE_KEEPER_HOME/errors.log` (rotated to errors.log.1 past 256 KB), an `error` event that `report` counts,
+ * `$CTX_KEEPER_HOME/errors.log` (rotated to errors.log.1 past 256 KB), an `error` event that `report` counts,
  * and `error: <hook> failed` on the status line until a turn is recorded cleanly again. Without the status line,
  * the session's next prompt gets one notice, at most once an hour.
  */

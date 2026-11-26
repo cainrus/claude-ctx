@@ -15,7 +15,7 @@ import { formatReport, summarize } from '../src/report.ts'
 import { loadTuning } from '../src/tune.ts'
 import { runSkipIf } from '../src/veto.ts'
 
-const VERSION = '0.8.0'
+const VERSION = '0.9.0'
 
 const USAGE = `cache-keeper ${VERSION} — keep an idle Claude Code session's prompt cache warm
 
@@ -43,7 +43,7 @@ Other:
   wait-cmd          print the shell command of the waiting Stop hook
   --help, --version
 
-State lives in $CACHE_KEEPER_HOME (default ~/.claude-cache-keeper).
+State lives in $CTX_KEEPER_HOME (default ~/.claude-ctx/keeper).
 Design: https://github.com/cainrus/claude-ctx/blob/main/workspace/cache-keeper/docs/DESIGN.md`
 
 function readStdin(): string {

@@ -23,5 +23,5 @@ The Node check: every hook command enters here and runs cache-keeper.ts only
 under a `node` on PATH that runs .ts (22.18 or later); without one the hooks
 do nothing and exit 0. At session start it then says so in every session, and
 once per machine asks the model to offer setting Node up. Keeper turned off
-(`"enabled": false` or CACHE_KEEPER_DISABLED=1) stays silent.
+(`"enabled": false` or CTX_KEEPER_DISABLED=1) stays silent.
 <!-- /gen:module -->

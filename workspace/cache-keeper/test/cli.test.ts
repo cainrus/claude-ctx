@@ -37,7 +37,7 @@ function run(cmd: string, input: unknown, env: Record<string, string>): Run {
     input: typeof input === 'string' ? input : JSON.stringify(input),
     encoding: 'utf8',
     // A clean env: the suite may itself run inside a Claude Code session.
-    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: env.CACHE_KEEPER_HOME, ...env },
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: env.CTX_KEEPER_HOME, ...env },
     timeout: 30_000,
   })
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, ms: Date.now() - started }
@@ -45,7 +45,7 @@ function run(cmd: string, input: unknown, env: Record<string, string>): Run {
 
 function fresh() {
   const home = tempHome()
-  const env = { CACHE_KEEPER_HOME: home, CACHE_KEEPER_IDLE_SEC: '30', CACHE_KEEPER_DELAY_SEC: '0' }
+  const env = { CTX_KEEPER_HOME: home, CTX_KEEPER_IDLE_SEC: '30', CTX_KEEPER_DELAY_SEC: '0' }
   // The last turn ended just past minAgeSec ago, so a wake right now is due.
   const transcript = writeTranscript(home, [{ at: Date.now() - (T.minAgeSec + 60) * 1000, read: 90_000, write: 500 }])
   const stop = { session_id: SID, transcript_path: transcript, hook_event_name: 'Stop', stop_hook_active: false }
@@ -57,7 +57,7 @@ test('the plugin\'s hooks/hooks.json runs exactly the command hooks the generato
   assert.deepEqual(commands, buildHooks(PLUGIN_SCRIPT))
   const waiter = hooksJson.hooks.Stop[0].hooks[1]
   assert.equal(waiter.asyncRewake, true)
-  assert.match(waiter.command, /^\[ "\$CLAUDE_CODE_ENTRYPOINT" = sdk-cli \] \|\| \{ sleep "\$\{CACHE_KEEPER_DELAY_SEC:-3000\}"; /)
+  assert.match(waiter.command, /^\[ "\$CLAUDE_CODE_ENTRYPOINT" = sdk-cli \] \|\| \{ sleep "\$\{CTX_KEEPER_DELAY_SEC:-3000\}"; /)
 })
 
 test('--version reports package.json', () => {
@@ -139,7 +139,7 @@ test('e2e: the mod claims the stretch -> the sleeper stands down -> fork-wake ->
 test('e2e: a refusal exits 0 and says nothing to the model', () => {
   const { home, env, stop } = fresh()
   run(command('Stop', 0), stop, env)
-  const w = run(command('Stop', 1), stop, { ...env, CACHE_KEEPER_IDLE_SEC: String(T.awaySec + 1) })
+  const w = run(command('Stop', 1), stop, { ...env, CTX_KEEPER_IDLE_SEC: String(T.awaySec + 1) })
   assert.equal(w.status, 0)
   assert.equal(w.stderr, '')
   assert.equal(readLedger(home)[0].reason, 'away')
@@ -147,7 +147,7 @@ test('e2e: a refusal exits 0 and says nothing to the model', () => {
 
 test('e2e: skipIf from config.json vetoes a due ping and sees the session id', () => {
   const { home, env, stop } = fresh()
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ skipIf: `[ "$CACHE_KEEPER_SESSION_ID" = ${SID} ]` }))
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ skipIf: `[ "$CTX_KEEPER_SESSION_ID" = ${SID} ]` }))
   run(command('Stop', 0), stop, env)
   const w = run(command('Stop', 1), stop, env)
   assert.equal(w.status, 0)
@@ -167,7 +167,7 @@ test('e2e: a stale sleeper exits 0 without a ledger line', () => {
 
 test('e2e: under `claude -p` (sdk-cli) the waiter returns at once instead of sleeping', () => {
   const { env, stop } = fresh()
-  const w = run(command('Stop', 1), stop, { ...env, CACHE_KEEPER_DELAY_SEC: '20', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
+  const w = run(command('Stop', 1), stop, { ...env, CTX_KEEPER_DELAY_SEC: '20', CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' })
   assert.equal(w.status, 0)
   assert.ok(w.ms < 10_000, `took ${w.ms} ms`)
 })
@@ -175,19 +175,19 @@ test('e2e: under `claude -p` (sdk-cli) the waiter returns at once instead of sle
 test('e2e: the delay reaches sleep from the environment', () => {
   const { env, stop } = fresh()
   run(command('Stop', 0), stop, env)
-  const w = run(command('Stop', 1), stop, { ...env, CACHE_KEEPER_DELAY_SEC: '1' })
+  const w = run(command('Stop', 1), stop, { ...env, CTX_KEEPER_DELAY_SEC: '1' })
   assert.equal(w.status, 2)
   assert.ok(w.ms >= 1000, `took ${w.ms} ms`)
 })
 
 test('e2e: handoff — brief on the last wake, then a cold prompt is held and `2` spawns from the brief', () => {
   const home = tempHome()
-  const env = { CACHE_KEEPER_HOME: home, CACHE_KEEPER_IDLE_SEC: String(T.awaySec + 1), CACHE_KEEPER_DELAY_SEC: '0' }
+  const env = { CTX_KEEPER_HOME: home, CTX_KEEPER_IDLE_SEC: String(T.awaySec + 1), CTX_KEEPER_DELAY_SEC: '0' }
   // cacheTtlSec 0: the cache counts as cold right after the brief turn.
   // closeAfterSpawn off: a real close would SIGTERM the claude this suite may run in.
   writeFileSync(
     join(home, 'config.json'),
-    JSON.stringify({ cacheTtlSec: 0, handoff: { enabled: true, closeAfterSpawn: false, spawnCommand: 'echo "spawned from $CACHE_KEEPER_BRIEF"' } }),
+    JSON.stringify({ cacheTtlSec: 0, handoff: { enabled: true, closeAfterSpawn: false, spawnCommand: 'echo "spawned from $CTX_KEEPER_BRIEF"' } }),
   )
   const transcript = writeTranscript(home, [{ at: Date.now() - (T.minAgeSec + 60) * 1000, read: 150_000, write: 500 }])
   const stop = { session_id: SID, transcript_path: transcript, hook_event_name: 'Stop', stop_hook_active: false }
@@ -223,7 +223,7 @@ test('e2e: garbage on stdin never fails a hook', () => {
 })
 
 test('cli: --help, --version, install-snippet, unknown command', () => {
-  const env = { CACHE_KEEPER_HOME: tempHome() }
+  const env = { CTX_KEEPER_HOME: tempHome() }
   const bin = `node ${JSON.stringify(join(ROOT, 'bin/cache-keeper.ts'))}`
   assert.match(run(`${bin} --help`, '', env).stdout, /record/)
   assert.match(run(`${bin} --version`, '', env).stdout, /^\d+\.\d+\.\d+\n$/)

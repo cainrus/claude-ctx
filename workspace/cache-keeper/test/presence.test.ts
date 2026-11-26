@@ -41,8 +41,8 @@ test('parseIdleOverride', () => {
 
 test('readIdleSeconds: env override wins over the probe', () => {
   const exec = () => assert.fail('probe must not run')
-  assert.equal(readIdleSeconds({ env: { CACHE_KEEPER_IDLE_SEC: '7' }, platform: 'darwin', exec }), 7)
-  assert.equal(readIdleSeconds({ env: { CACHE_KEEPER_IDLE_SEC: 'unknown' }, platform: 'darwin', exec }), null)
+  assert.equal(readIdleSeconds({ env: { CTX_KEEPER_IDLE_SEC: '7' }, platform: 'darwin', exec }), 7)
+  assert.equal(readIdleSeconds({ env: { CTX_KEEPER_IDLE_SEC: 'unknown' }, platform: 'darwin', exec }), null)
 })
 
 test('readIdleSeconds: a platform without a probe is unknown', () => {
@@ -169,7 +169,7 @@ test('linux: logind is asked about the given uid', () => {
 test('readIdleSeconds: routes linux to the probe chain, with the given clock', () => {
   const exec = system({ xprintidle: '10000' })
   assert.equal(readIdleSeconds({ env: {}, platform: 'linux', exec, now: NOW, uid: 1000 }), 10)
-  assert.equal(readIdleSeconds({ env: { CACHE_KEEPER_IDLE_SEC: '5' }, platform: 'linux', exec: () => assert.fail('no probe') }), 5)
+  assert.equal(readIdleSeconds({ env: { CTX_KEEPER_IDLE_SEC: '5' }, platform: 'linux', exec: () => assert.fail('no probe') }), 5)
 })
 
 test('readIdleSeconds: the real probe of this machine answers a number or null, quickly', () => {

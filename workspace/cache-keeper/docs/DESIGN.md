@@ -146,13 +146,13 @@ it decides which reason the ledger blames.
   cap's position from the last 60 days, it goes up a step when that position
   clears 2× breakeven and down a step when it does not clear breakeven, inside
   [2, 8]. The decision is kept in `tuning.json`; `report` prints it.
-- Every threshold is overridable through env (`CACHE_KEEPER_*`) and a JSON
+- Every threshold is overridable through env (`CTX_KEEPER_*`) and a JSON
   config file; tests assert behaviour against the exported constants, never the
   numbers.
 
 ## State and ledger
 
-`$CACHE_KEEPER_HOME`, default `~/.claude-cache-keeper/`:
+`$CTX_KEEPER_HOME`, default `~/.claude-ctx/keeper/`:
 
 - `sessions/<session_id>.json` — per-session state (above);
 - `away-budget.json` — the machine-wide bucket;

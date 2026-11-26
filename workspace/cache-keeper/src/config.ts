@@ -1,5 +1,5 @@
 /**
- * Settings come from the defaults, then `$CACHE_KEEPER_HOME/config.json`, then env, the later winning.
+ * Settings come from the defaults, then `$CTX_KEEPER_HOME/config.json`, then env, the later winning.
  * An invalid value (a typo, a negative number) is ignored and the earlier source stays in force.
  */
 
@@ -57,45 +57,45 @@ export interface SettingDoc {
 
 /** Every setting a user can change, in the order the docs list them. */
 export const SETTINGS: readonly SettingDoc[] = Object.freeze([
-  { env: 'CACHE_KEEPER_DELAY_SEC', defaultText: `\`${DEFAULT_DELAY_SEC}\``, meaning: 'how long the waiter sleeps after each turn; keep it between `minAgeSec` and `maxAgeSec` (env only: the shell reads it)' },
-  { env: 'CACHE_KEEPER_HOME', defaultText: '`~/.claude-cache-keeper`', meaning: 'state, ledger and `config.json`' },
-  { key: 'enabled', env: 'CACHE_KEEPER_DISABLED=1', meaning: 'master switch' },
-  { key: 'awaySec', env: 'CACHE_KEEPER_AWAY_SEC', meaning: 'idle longer than this = gone' },
-  { key: 'presenceSec', env: 'CACHE_KEEPER_PRESENCE_SEC', meaning: 'idle up to this = at the keyboard' },
-  { key: 'maxAwayPings', env: 'CACHE_KEEPER_MAX_AWAY_PINGS', meaning: 'machine-wide pings per absence' },
-  { key: 'minCtxTokens', env: 'CACHE_KEEPER_MIN_CTX_TOKENS', meaning: 'smallest context worth holding' },
-  { key: 'minAgeSec', env: 'CACHE_KEEPER_MIN_AGE_SEC', meaning: 'earliest ping' },
-  { key: 'maxAgeSec', env: 'CACHE_KEEPER_MAX_AGE_SEC', meaning: 'latest ping' },
-  { key: 'maxPings', env: 'CACHE_KEEPER_MAX_PINGS', meaning: 'pings per idle stretch; unset, it is [tuned](policy.md#the-cap-tunes-itself) from this start, set, the tuning is off' },
-  { key: 'hitRatio', env: 'CACHE_KEEPER_HIT_RATIO', meaning: 'wake turn counts as a hit at `read / (read + write) ≥` this; a value above 1 is ignored' },
+  { env: 'CTX_KEEPER_DELAY_SEC', defaultText: `\`${DEFAULT_DELAY_SEC}\``, meaning: 'how long the waiter sleeps after each turn; keep it between `minAgeSec` and `maxAgeSec` (env only: the shell reads it)' },
+  { env: 'CTX_KEEPER_HOME', defaultText: '`~/.claude-ctx/keeper`', meaning: 'state, ledger and `config.json`' },
+  { key: 'enabled', env: 'CTX_KEEPER_DISABLED=1', meaning: 'master switch' },
+  { key: 'awaySec', env: 'CTX_KEEPER_AWAY_SEC', meaning: 'idle longer than this = gone' },
+  { key: 'presenceSec', env: 'CTX_KEEPER_PRESENCE_SEC', meaning: 'idle up to this = at the keyboard' },
+  { key: 'maxAwayPings', env: 'CTX_KEEPER_MAX_AWAY_PINGS', meaning: 'machine-wide pings per absence' },
+  { key: 'minCtxTokens', env: 'CTX_KEEPER_MIN_CTX_TOKENS', meaning: 'smallest context worth holding' },
+  { key: 'minAgeSec', env: 'CTX_KEEPER_MIN_AGE_SEC', meaning: 'earliest ping' },
+  { key: 'maxAgeSec', env: 'CTX_KEEPER_MAX_AGE_SEC', meaning: 'latest ping' },
+  { key: 'maxPings', env: 'CTX_KEEPER_MAX_PINGS', meaning: 'pings per idle stretch; unset, it is [tuned](policy.md#the-cap-tunes-itself) from this start, set, the tuning is off' },
+  { key: 'hitRatio', env: 'CTX_KEEPER_HIT_RATIO', meaning: 'wake turn counts as a hit at `read / (read + write) ≥` this; a value above 1 is ignored' },
   { key: 'prices', defaultText: 'per model, `src/prices.ts`', meaning: 'USD per million tokens, for `report` and the handoff menu: `{"claude-opus-5-5": {"input": 4, "cacheRead": 0.2, "cacheWrite": 8, "output": 20}}` per model id prefix, or a number for a family (`"opus": 5`: input, with 0.1× read, 2× write, 5× output). No Anthropic API serves prices, so the table is kept by hand; `report` names any model it has no row for' },
-  { key: 'skipIf', env: 'CACHE_KEEPER_SKIP_IF', meaning: 'shell command asked before each ping or due handoff; exit 0 skips, exit 3 hands off (see [How it decides](policy.md))' },
-  { env: 'CACHE_KEEPER_IDLE_SEC', meaning: 'override the presence probe (a number of seconds, or `unknown`)' },
-  { env: 'CACHE_KEEPER_BACKGROUND', meaning: '`0`/`1`: treat the session as interactive / background regardless of `CLAUDE_JOB_DIR` and the transcript' },
+  { key: 'skipIf', env: 'CTX_KEEPER_SKIP_IF', meaning: 'shell command asked before each ping or due handoff; exit 0 skips, exit 3 hands off (see [How it decides](policy.md))' },
+  { env: 'CTX_KEEPER_IDLE_SEC', meaning: 'override the presence probe (a number of seconds, or `unknown`)' },
+  { env: 'CTX_KEEPER_BACKGROUND', meaning: '`0`/`1`: treat the session as interactive / background regardless of `CLAUDE_JOB_DIR` and the transcript' },
   { key: 'statusLine', meaning: 'show the cache line under the prompt (see [Status line](status-line.md)); only `false` turns it off' },
   { key: 'band', meaning: 'draw that line above the prompt with buttons instead, where the mod loads (see [The band](status-line.md#the-band-the-same-line-clickable)); `false` keeps it plain text' },
-  { key: 'forkPings', env: 'CACHE_KEEPER_FORK', meaning: 'ping with a fork instead of a wake turn where the plugin\'s mod loads (see [Fork pings](fork-pings.md))' },
+  { key: 'forkPings', env: 'CTX_KEEPER_FORK', meaning: 'ping with a fork instead of a wake turn where the plugin\'s mod loads (see [Fork pings](fork-pings.md))' },
   { key: 'cacheTtlSec', meaning: 'the cache TTL `/ctx:status`, `/ctx:ping`, the report and the ping timing assume; the status line uses the bucket the last turn really wrote and falls back to this; change it only if yours is not one hour' },
-  { key: 'handoff.enabled', env: 'CACHE_KEEPER_HANDOFF', meaning: 'write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](handoff.md))' },
-  { key: 'handoff.minCtxTokens', env: 'CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS', meaning: 'below this a brief saves too little' },
-  { key: 'handoff.spawnCommand', env: 'CACHE_KEEPER_HANDOFF_SPAWN', meaning: 'shell command starting a new session; gets `CACHE_KEEPER_BRIEF`, `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_TRANSCRIPT_PATH`, `CACHE_KEEPER_CWD`; 45 s at most' },
-  { key: 'handoff.closeAfterSpawn', env: 'CACHE_KEEPER_HANDOFF_CLOSE', meaning: 'close the old session after a successful spawn' },
-  { key: 'handoff.closeCommand', defaultText: 'SIGTERM to the session\'s `claude`', meaning: 'how to close it; gets `CACHE_KEEPER_SESSION_ID`, `CACHE_KEEPER_CLAUDE_PID`' },
+  { key: 'handoff.enabled', env: 'CTX_KEEPER_HANDOFF', meaning: 'write a brief before the cache dies and ask before a prompt hits it cold (see [Handoff](handoff.md))' },
+  { key: 'handoff.minCtxTokens', env: 'CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS', meaning: 'below this a brief saves too little' },
+  { key: 'handoff.spawnCommand', env: 'CTX_KEEPER_HANDOFF_SPAWN', meaning: 'shell command starting a new session; gets `CTX_KEEPER_BRIEF`, `CTX_KEEPER_SESSION_ID`, `CTX_KEEPER_TRANSCRIPT_PATH`, `CTX_KEEPER_CWD`; 45 s at most' },
+  { key: 'handoff.closeAfterSpawn', env: 'CTX_KEEPER_HANDOFF_CLOSE', meaning: 'close the old session after a successful spawn' },
+  { key: 'handoff.closeCommand', defaultText: 'SIGTERM to the session\'s `claude`', meaning: 'how to close it; gets `CTX_KEEPER_SESSION_ID`, `CTX_KEEPER_CLAUDE_PID`' },
 ] satisfies SettingDoc[])
 
 export const THRESHOLD_ENV: Readonly<Record<keyof Thresholds, string>> = Object.freeze({
-  awaySec: 'CACHE_KEEPER_AWAY_SEC',
-  presenceSec: 'CACHE_KEEPER_PRESENCE_SEC',
-  maxAwayPings: 'CACHE_KEEPER_MAX_AWAY_PINGS',
-  minCtxTokens: 'CACHE_KEEPER_MIN_CTX_TOKENS',
-  minAgeSec: 'CACHE_KEEPER_MIN_AGE_SEC',
-  maxAgeSec: 'CACHE_KEEPER_MAX_AGE_SEC',
-  maxPings: 'CACHE_KEEPER_MAX_PINGS',
+  awaySec: 'CTX_KEEPER_AWAY_SEC',
+  presenceSec: 'CTX_KEEPER_PRESENCE_SEC',
+  maxAwayPings: 'CTX_KEEPER_MAX_AWAY_PINGS',
+  minCtxTokens: 'CTX_KEEPER_MIN_CTX_TOKENS',
+  minAgeSec: 'CTX_KEEPER_MIN_AGE_SEC',
+  maxAgeSec: 'CTX_KEEPER_MAX_AGE_SEC',
+  maxPings: 'CTX_KEEPER_MAX_PINGS',
 })
 
 export function resolveHome(env: NodeJS.ProcessEnv = process.env): string {
-  const h = env.CACHE_KEEPER_HOME
-  return h && h.trim() !== '' ? h : join(env.HOME ?? homedir(), '.claude-cache-keeper')
+  const h = env.CTX_KEEPER_HOME
+  return h && h.trim() !== '' ? h : join(env.HOME ?? homedir(), '.claude-ctx/keeper')
 }
 
 export function num(v: unknown): number | undefined {
@@ -140,8 +140,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (key === 'maxPings') maxPingsAuto = false
   }
 
-  const hitRatio = num(env.CACHE_KEEPER_HIT_RATIO) ?? num(file.hitRatio)
-  const disabled = bool(env.CACHE_KEEPER_DISABLED)
+  const hitRatio = num(env.CTX_KEEPER_HIT_RATIO) ?? num(file.hitRatio)
+  const disabled = bool(env.CTX_KEEPER_DISABLED)
   const prices: PriceTable = mergePrices(file.prices)
 
   return {
@@ -151,10 +151,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxPingsAuto,
     hitRatio: hitRatio !== undefined && hitRatio <= 1 ? hitRatio : 0.9,
     cacheTtlSec: num(file.cacheTtlSec) ?? 3600,
-    delaySec: num(env.CACHE_KEEPER_DELAY_SEC) ?? DEFAULT_DELAY_SEC,
+    delaySec: num(env.CTX_KEEPER_DELAY_SEC) ?? DEFAULT_DELAY_SEC,
     prices,
-    forkPings: bool(env.CACHE_KEEPER_FORK) ?? bool(file.forkPings) ?? true,
-    skipIf: str(env.CACHE_KEEPER_SKIP_IF) ?? str(file.skipIf),
+    forkPings: bool(env.CTX_KEEPER_FORK) ?? bool(file.forkPings) ?? true,
+    skipIf: str(env.CTX_KEEPER_SKIP_IF) ?? str(file.skipIf),
     handoff: loadHandoff(env, file.handoff),
   }
 }
@@ -162,10 +162,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 function loadHandoff(env: NodeJS.ProcessEnv, raw: unknown): HandoffConfig {
   const f = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   return {
-    enabled: bool(env.CACHE_KEEPER_HANDOFF) ?? bool(f.enabled) ?? false,
-    minCtxTokens: num(env.CACHE_KEEPER_HANDOFF_MIN_CTX_TOKENS) ?? num(f.minCtxTokens) ?? 120_000,
-    spawnCommand: str(env.CACHE_KEEPER_HANDOFF_SPAWN) ?? str(f.spawnCommand),
-    closeAfterSpawn: bool(env.CACHE_KEEPER_HANDOFF_CLOSE) ?? bool(f.closeAfterSpawn) ?? true,
+    enabled: bool(env.CTX_KEEPER_HANDOFF) ?? bool(f.enabled) ?? false,
+    minCtxTokens: num(env.CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS) ?? num(f.minCtxTokens) ?? 120_000,
+    spawnCommand: str(env.CTX_KEEPER_HANDOFF_SPAWN) ?? str(f.spawnCommand),
+    closeAfterSpawn: bool(env.CTX_KEEPER_HANDOFF_CLOSE) ?? bool(f.closeAfterSpawn) ?? true,
     closeCommand: str(f.closeCommand),
   }
 }

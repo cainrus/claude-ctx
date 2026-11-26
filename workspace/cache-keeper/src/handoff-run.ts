@@ -75,7 +75,7 @@ export function realIO(config: Config): HandoffIO {
       const child = spawn('/bin/sh', ['-c', `sleep ${CLOSE_DELAY_SEC}; ${command}`], {
         detached: true,
         stdio: 'ignore',
-        env: { ...process.env, CACHE_KEEPER_SESSION_ID: sessionId, CACHE_KEEPER_CLAUDE_PID: pid ? String(pid) : '' },
+        env: { ...process.env, CTX_KEEPER_SESSION_ID: sessionId, CTX_KEEPER_CLAUDE_PID: pid ? String(pid) : '' },
       })
       child.on('error', () => {})
       child.unref()

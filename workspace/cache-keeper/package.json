@@ -1,6 +1,6 @@
 {
   "name": "@claude-ctx/cache-keeper",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Keeps an idle Claude Code session's prompt cache warm with a Stop hook — only while someone is plausibly coming back. A package of the claude-ctx plugin.",
   "type": "module",

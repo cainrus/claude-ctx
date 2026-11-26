@@ -6,7 +6,7 @@
  * cold, your prompt is held before it reaches the model and a menu offers: send it again (or `1`) to continue
  * here, or `2` to start a new session from the brief plus your message (`handoff.spawnCommand`;
  * `handoff.closeAfterSpawn` closes this one). Where the plugin's mod loads, `!` commands, slash commands and
- * `/compact` are held the same way. Off by default: turn on with `handoff.enabled` or `CACHE_KEEPER_HANDOFF=1`.
+ * `/compact` are held the same way. Off by default: turn on with `handoff.enabled` or `CTX_KEEPER_HANDOFF=1`.
  */
 
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -263,10 +263,10 @@ function startNew(rec: HandoffRecord, config: Config, io: HandoffIO | undefined,
   }
   const cwd = cwdOf(rec.transcriptPath)
   const r = io.spawn(spawnCommand, {
-    CACHE_KEEPER_BRIEF: path,
-    CACHE_KEEPER_SESSION_ID: rec.sessionId,
-    CACHE_KEEPER_TRANSCRIPT_PATH: rec.transcriptPath,
-    ...(cwd ? { CACHE_KEEPER_CWD: cwd } : {}),
+    CTX_KEEPER_BRIEF: path,
+    CTX_KEEPER_SESSION_ID: rec.sessionId,
+    CTX_KEEPER_TRANSCRIPT_PATH: rec.transcriptPath,
+    ...(cwd ? { CTX_KEEPER_CWD: cwd } : {}),
   })
   const out = r.output.trim().slice(-SPAWN_OUTPUT_CHARS)
   const t = new Date(now).toISOString()

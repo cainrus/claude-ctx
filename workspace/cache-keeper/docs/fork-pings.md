@@ -7,7 +7,7 @@ is added to the transcript. The policy, budgets and report are the same as for w
 fails is sent again, then falls back to a wake turn while the cache can still be reached warm. Forks also
 hold the cache while a question (AskUserQuestion) waits for your answer, and `/ctx:ping` uses one.
 Without the mod (an older Claude Code, mods off) pings are wake turns as before.
-Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
+Off: `"forkPings": false` or `CTX_KEEPER_FORK=0`.
 <!-- /gen:module -->
 
 After a compaction nothing of the new context is cached until a turn sends it, so keeper sends no ping until the
