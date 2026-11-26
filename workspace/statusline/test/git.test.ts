@@ -12,7 +12,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { branchOfHead, cacheKey, candidatesOf, dirtyOf, gitFactsOf, parseCounts, passDue, workdirOf, type FsLike } from '../hooks/gitfacts.ts'
-import { refreshCounts, takeLock } from '../src/gitcache.ts'
+import { refreshCounts } from '../src/gitcache.ts'
+import { takeLock, withLock } from '../src/lock.ts'
 
 const fs: FsLike = {
   read: (p) => readFile(p, 'utf8'),
@@ -131,6 +132,22 @@ test('a held lock means another process refreshes: this one runs nothing', (t) =
   assert.equal(refreshCounts(r.main, gitDir, file), false)
   assert.throws(() => statSync(file), 'nothing written')
   assert.equal(takeLock(`${file}.lock`, now + 61), true, 'a lock past its minute is a dead refresher, taken over')
+  assert.equal(takeLock(`${file}.lock`, now + 61), false, 'and the one who took it over holds it')
+})
+
+test('withLock waits for a held lock, then runs; past its wait it runs nothing', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const lock = join(root, 'x.lock')
+  assert.equal(withLock(lock, () => 1), 1)
+  assert.equal(takeLock(lock, Math.floor(Date.now() / 1000)), true, 'released after the run')
+  assert.equal(withLock(lock, () => 2, 120), undefined)
+})
+
+test('a config dir is never a worked-on folder, an ignored folder only on its own boundary', () => {
+  const home = '/Users/u'
+  const inputs = [{ file_path: '/Users/u/.claude-work2/x' }, { file_path: '/Users/u/tmpfoo/a' }, { file_path: '/Users/u/tmp/b' }]
+  assert.deepEqual(candidatesOf(inputs, home, ['/Users/u/tmp']), ['/Users/u/tmpfoo/a'])
 })
 
 test('which pass is due: untracked every two minutes, tracked every 20 s or when the index moved', () => {

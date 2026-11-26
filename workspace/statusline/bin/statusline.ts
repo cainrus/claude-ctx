@@ -10,7 +10,8 @@
  *   git        {workdir, gitDir, cacheFile}               the checkout's counts (src/gitcache.ts)
  */
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, realpathSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { barometerJson, writeBarometer, type BarometerLimit } from '../src/barometer.ts'
 import { refreshCounts } from '../src/gitcache.ts'
 import { recordRates, windowOf, type RatePair } from '../src/rates.ts'
@@ -48,7 +49,16 @@ export function runCommand(cmd: string | undefined, input: Json): boolean {
   return false
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/** Run as a script, not imported: by the real path, so a link or a space in the plugin's path does not turn every command off. */
+function isMain(): boolean {
+  try {
+    return process.argv[1] !== undefined && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])
+  } catch {
+    return false
+  }
+}
+
+if (isMain()) {
   try {
     const raw = readFileSync(0, 'utf8')
     runCommand(process.argv[2], raw.trim() === '' ? {} : (JSON.parse(raw) as Json))

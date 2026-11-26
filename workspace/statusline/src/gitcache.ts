@@ -7,47 +7,14 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 // @ts-ignore TS5097
 import { countsText, parseCounts, passDue, type GitCounts } from '../hooks/gitfacts.ts'
+import { releaseLock, takeLock } from './lock.ts'
 
 /** Seconds a git call may take. */
 export const GIT_BUDGET_SEC = 10
-/** A lock older than this is a dead refresher and is taken over. */
-export const LOCK_MAX_AGE_SEC = 60
-
-/** mkdir is the atomic step: whoever creates the folder refreshes. */
-export function takeLock(lock: string, nowSec: number): boolean {
-  try {
-    mkdirSync(lock)
-    writeFileSync(join(lock, 'at'), `${nowSec}\n`)
-    return true
-  } catch {
-    // Held: by a live refresher, or a dead one past its age.
-  }
-  let at = NaN
-  try {
-    at = Number(readFileSync(join(lock, 'at'), 'utf8').trim())
-  } catch {
-    // WARNING: no stamp yet means the holder sits between its mkdir and its write; stamp it so a holder that died there still ages out.
-    try {
-      writeFileSync(join(lock, 'at'), `${nowSec}\n`, { flag: 'wx' })
-    } catch {
-      // Someone stamped it first.
-    }
-    return false
-  }
-  if (Number.isFinite(at) && nowSec - at <= LOCK_MAX_AGE_SEC) return false
-  rmSync(lock, { recursive: true, force: true })
-  try {
-    mkdirSync(lock)
-    writeFileSync(join(lock, 'at'), `${nowSec}\n`)
-    return true
-  } catch {
-    return false
-  }
-}
 
 const mtimeSec = (p: string): number => {
   try {
@@ -97,6 +64,6 @@ export function refreshCounts(workdir: string, gitDir: string, cacheFile: string
     renameSync(tmp, cacheFile)
     return true
   } finally {
-    rmSync(lock, { recursive: true, force: true })
+    releaseLock(lock)
   }
 }

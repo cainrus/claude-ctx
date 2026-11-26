@@ -83,6 +83,27 @@ test('CTX_STATUSLINE_DISABLED=1: the engine\'s line and the agent rows stay as t
   assert.equal(renderAgentRow($, row, echo).props.label, 'reading')
 })
 
+test('turned off, the turn\'s events refresh nothing and run no helper', async () => {
+  const { $, runs, invalidated } = engine({ CTX_STATUSLINE_DISABLED: '1' })
+  renderStatusLine($, site(), echo)
+  await settle()
+  statuslineTurnStarted($, {})
+  statuslineStepAnswered($, {}, { model: 'claude-opus-5-5', input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })
+  await settle()
+  assert.deepEqual(runs, [])
+  assert.equal(invalidated(), 0)
+})
+
+test('an engine call that fails under a measurement is swallowed, not left unhandled', async () => {
+  const { $ } = engine({ CTX_STATUSLINE_RATE_DIR: '/rl' })
+  ;($ as { session: { id: () => Promise<string> } }).session.id = async () => {
+    throw new Error('session gone')
+  }
+  const e = { context: { window: 1 }, rateLimits: [{ kind: 'five_hour', percentUsed: 1 }], changed: ['rateLimits'] }
+  assert.equal(await measureSession($, e, echo), e)
+  await settle()
+})
+
 test('the session record, the account table and the session URL reach the line', async () => {
   const meta = '/Users/u/.claude-work2/sessions-meta/' + SID + '.json'
   const { $ } = engine(
@@ -157,7 +178,7 @@ test('settings: ~ and relative folders resolve, the config dir is never a worked
   assert.equal(s.configDir, '/Users/u/.claude-home')
   assert.equal(s.metaDir, '/Users/u/.claude-home/sessions-meta')
   assert.equal(s.branchDir, '/abs/wb')
-  assert.deepEqual(s.ignore, ['/Users/u/.claude', '/Users/u/dotfiles', '/tmp'])
+  assert.deepEqual(s.ignore, ['/Users/u/dotfiles', '/tmp'])
   assert.equal(s.rateDir, '/rl')
   assert.equal(s.barometer, undefined)
   assert.deepEqual(s.accounts, {})

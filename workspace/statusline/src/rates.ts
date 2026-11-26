@@ -8,8 +8,9 @@
  * Turn it on with `CTX_STATUSLINE_RATE_DIR`.
  */
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { withLock } from './lock.ts'
 
 /** One window: whole percent used and when it resets, epoch seconds; null when unknown. */
 export interface RateWindow {
@@ -63,6 +64,12 @@ export function windowOf(limit: { percentUsed?: unknown; resetsAt?: unknown } | 
 /** Merges `next` into the account's journal; true when it appended a line. */
 export function recordRates(dir: string, account: string, session: string, at: number, next: RatePair): boolean {
   if (next.five.pct === null && next.week.pct === null) return false
+  mkdirSync(dir, { recursive: true })
+  // Two sessions of one account reading one new step in the same moment would both append it: one at a time.
+  return withLock(join(dir, `${account}.lock`), () => appendStep(dir, account, session, at, next)) ?? false
+}
+
+function appendStep(dir: string, account: string, session: string, at: number, next: RatePair): boolean {
   const lastPath = join(dir, `${account}.last`)
   let last: RatePair = { five: EMPTY, week: EMPTY }
   try {
@@ -74,8 +81,9 @@ export function recordRates(dir: string, account: string, session: string, at: n
   const week = mergeWindow(next.week, last.week)
   if (!five.moved && !week.moved) return false
   const pair = { five: five.window, week: week.window }
-  mkdirSync(dir, { recursive: true })
   appendFileSync(join(dir, `${account}.jsonl`), journalLine(at, session, pair))
-  writeFileSync(lastPath, lastText(pair))
+  const tmp = `${lastPath}.${process.pid}`
+  writeFileSync(tmp, lastText(pair))
+  renameSync(tmp, lastPath)
   return true
 }

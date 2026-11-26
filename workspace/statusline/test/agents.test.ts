@@ -41,6 +41,7 @@ test('model families, token counts, ages', () => {
   assert.equal(humanTokens(999), '999')
   assert.equal(humanTokens(1000), '1k')
   assert.equal(humanTokens(1_500_000), '1.5M')
+  assert.equal(humanTokens(999_700), '1M', 'a thousand k is a million')
   assert.equal(humanTokens(12_000_000), '12M')
   assert.equal(shortAge(undefined, NOW), '')
   assert.equal(shortAge(NOW + 1000, NOW), '')

@@ -30,7 +30,7 @@ export const SETTINGS: ReadonlyArray<{ env: string; meaning: string }> = Object.
   { env: 'CTX_STATUSLINE_ACCOUNTS', meaning: 'JSON object, config-dir name to account label (`{".claude-work2": "work 🔑work2"}`); a label other than the name after `.claude-` shows yellow' },
   { env: 'CTX_STATUSLINE_META_DIR', meaning: 'folder of session records `<session id>.json` (`display_state`, `plan_total`, `plan_open`, ...), relative to `CLAUDE_CONFIG_DIR`; unset, no state glyph and no plan' },
   { env: 'CTX_STATUSLINE_BRANCH_DIR', meaning: 'folder of files `<session id>` naming the branch the session works on, shown over the checked-out one; relative to `CLAUDE_CONFIG_DIR`' },
-  { env: 'CTX_STATUSLINE_IGNORE', meaning: '`:`-separated path prefixes that never pick the folder being worked on (`~/.claude` always does not)' },
+  { env: 'CTX_STATUSLINE_IGNORE', meaning: '`:`-separated folders whose paths never pick the folder being worked on; a config dir (`~/.claude*`) never does' },
   { env: 'CTX_STATUSLINE_RATE_DIR', meaning: 'journal each whole-point step of the 5-hour and weekly limits to `<dir>/<config-dir name>.jsonl` (`RATE_LIMITS_DIR` is read too)' },
   { env: 'CTX_STATUSLINE_BAROMETER', meaning: 'write the limits to this file for the AI Usage Barometer SwiftBar plugin (`AI_USAGE_CLAUDE_STATUS_CACHE` is read too)' },
   { env: 'CTX_STATUSLINE_CACHE_DIR', meaning: 'where the git counts every session shares live; default `~/.cache/claude-statusline` (`STATUSLINE_CACHE_DIR` is read too)' },
@@ -59,6 +59,8 @@ interface Settings {
 let settings: Settings | undefined
 let loading: Promise<Settings> | undefined
 let started = false
+/** Started and not turned off: only then do the turn's events refresh anything. */
+let live = false
 const facts: Facts = {}
 let text: string | undefined
 let turn = { inUsd: 0, outUsd: 0 }
@@ -139,7 +141,7 @@ export function settingsFrom(env: SettingsEnv): Settings {
   const rate = get('CTX_STATUSLINE_RATE_DIR') ?? get('RATE_LIMITS_DIR')
   const baro = get('CTX_STATUSLINE_BAROMETER') ?? get('AI_USAGE_CLAUDE_STATUS_CACHE')
   const cache = get('CTX_STATUSLINE_CACHE_DIR') ?? get('STATUSLINE_CACHE_DIR')
-  const ignore = [`${home}/.claude`, ...(get('CTX_STATUSLINE_IGNORE') ?? '').split(':').filter((s) => s !== '').map((s) => expand(s, home))]
+  const ignore = (get('CTX_STATUSLINE_IGNORE') ?? '').split(':').filter((s) => s !== '').map((s) => expand(s, home))
   const sessionUrl = get('CTX_STATUSLINE_SESSION_URL')
   const metaDir = within(get('CTX_STATUSLINE_META_DIR'), configDir, home)
   const branchDir = within(get('CTX_STATUSLINE_BRANCH_DIR'), configDir, home)
@@ -244,7 +246,8 @@ let gitDirOf: { dir: string; gitDir?: string; top?: string } | undefined
 async function refreshGit($: $, s: Settings, dir?: string): Promise<void> {
   const fs = fsOf($)
   const target = dir ?? gitDirOf?.dir ?? (await $.session.cwd())
-  if (gitDirOf?.dir !== target) {
+  // A folder outside a repository is asked again each time: a `git init` or clone there shows up by the next tick.
+  if (gitDirOf?.dir !== target || gitDirOf.gitDir === undefined) {
     const g = await gitFactsOf(fs, target)
     gitDirOf = { dir: target, ...(g ? { gitDir: g.gitDir, top: g.top } : {}) }
   }
@@ -285,6 +288,8 @@ async function refreshGit($: $, s: Settings, dir?: string): Promise<void> {
 async function tick($: $): Promise<void> {
   try {
     const s = await settingsOf($)
+    // A first refresh that failed is made up here, not on every draw.
+    if (facts.sessionId === undefined) await refreshSession($, s)
     await Promise.all([refreshMeta($, s), refreshGit($, s)])
     redraw($)
   } catch {
@@ -292,21 +297,19 @@ async function tick($: $): Promise<void> {
   }
 }
 
+/** At the first draw: the settings, then, unless the line is off, the facts and the tick. */
 function start($: $): void {
   if (started) return
   started = true
   void (async () => {
-    try {
-      const s = await settingsOf($)
-      if (s.disabled) return
-      await refreshSession($, s)
-      await Promise.all([refreshMeta($, s), refreshWorkdir($, s)])
-      redraw($)
-      $.clock.every(TICK_MS, () => void tick($))
-    } catch {
-      started = false
-    }
-  })()
+    const s = await settingsOf($)
+    if (s.disabled) return
+    live = true
+    $.clock.every(TICK_MS, () => void tick($))
+    await refreshSession($, s)
+    await Promise.all([refreshMeta($, s), refreshWorkdir($, s)])
+    redraw($)
+  })().catch(() => {})
 }
 
 /** The `ui.render` hook on `StatusLine`. */
@@ -358,8 +361,8 @@ export async function measureSession<E extends { context: { tokens?: number; win
   try {
     const s = await settingsOf($)
     spendFrom(e)
-    if (e.changed.includes('rateLimits') && e.rateLimits.length > 0) void recordLimits($, s, e.rateLimits)
-    if (started) redraw($)
+    if (e.changed.includes('rateLimits') && e.rateLimits.length > 0) void recordLimits($, s, e.rateLimits).catch(() => {})
+    if (live) redraw($)
   } catch {
     // The figures come again at the next measurement.
   }
@@ -396,7 +399,7 @@ export function statuslineTurnStarted($: $, e: { agentId?: string }): void {
       const { turn: _, ...rest } = facts.spend
       facts.spend = rest
     }
-    if (started) void settingsOf($).then((s) => refreshSession($, s)).then(() => redraw($)).catch(() => {})
+    if (live) void settingsOf($).then((s) => refreshSession($, s)).then(() => redraw($)).catch(() => {})
   } catch {
     // The line keeps the last turn's price until the next step.
   }
@@ -410,7 +413,7 @@ export function statuslineStepAnswered($: $, e: { agentId?: string }, usage: unk
       turn = { inUsd: turn.inUsd + split.inUsd, outUsd: turn.outUsd + split.outUsd }
       facts.spend = { ...facts.spend, turn: { ...turn } }
     }
-    if (!started) return
+    if (!live) return
     redraw($)
     if (e.agentId === undefined) {
       void (async () => {
@@ -436,6 +439,7 @@ export function resetForTest(): void {
   settings = undefined
   loading = undefined
   started = false
+  live = false
   text = undefined
   turn = { inUsd: 0, outUsd: 0 }
   workdirAt = 0

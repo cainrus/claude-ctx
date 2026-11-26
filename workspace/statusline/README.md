@@ -43,7 +43,7 @@ Every setting is an environment variable (a settings file's `env` block works):
 | `CTX_STATUSLINE_ACCOUNTS` | JSON object, config-dir name to account label (`{".claude-work2": "work 🔑work2"}`); a label other than the name after `.claude-` shows yellow |
 | `CTX_STATUSLINE_META_DIR` | folder of session records `<session id>.json` (`display_state`, `plan_total`, `plan_open`, ...), relative to `CLAUDE_CONFIG_DIR`; unset, no state glyph and no plan |
 | `CTX_STATUSLINE_BRANCH_DIR` | folder of files `<session id>` naming the branch the session works on, shown over the checked-out one; relative to `CLAUDE_CONFIG_DIR` |
-| `CTX_STATUSLINE_IGNORE` | `:`-separated path prefixes that never pick the folder being worked on (`~/.claude` always does not) |
+| `CTX_STATUSLINE_IGNORE` | `:`-separated folders whose paths never pick the folder being worked on; a config dir (`~/.claude*`) never does |
 | `CTX_STATUSLINE_RATE_DIR` | journal each whole-point step of the 5-hour and weekly limits to `<dir>/<config-dir name>.jsonl` (`RATE_LIMITS_DIR` is read too) |
 | `CTX_STATUSLINE_BAROMETER` | write the limits to this file for the AI Usage Barometer SwiftBar plugin (`AI_USAGE_CLAUDE_STATUS_CACHE` is read too) |
 | `CTX_STATUSLINE_CACHE_DIR` | where the git counts every session shares live; default `~/.cache/claude-statusline` (`STATUSLINE_CACHE_DIR` is read too) |

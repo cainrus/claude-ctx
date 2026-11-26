@@ -79,6 +79,7 @@ test('the state glyph comes from display_state; an older record from its status,
   assert.equal(stateOf({ status: 'inprogress', ended_at: '2026-11-26T10:00:00Z' }), 'ended')
   assert.equal(stateOf({ status: 'inprogress' }), 'working')
   assert.equal(stateOf({ display_state: 'weird' }), 'unknown')
+  assert.equal(stateOf({ display_state: 'toString' }), 'unknown', 'an inherited name is no state')
   assert.equal(stateOf(undefined), undefined, 'no record: no glyph')
   assert.equal(plain(lineText({ state: 'done_stale' })), '✅')
 })

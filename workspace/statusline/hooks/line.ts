@@ -171,7 +171,7 @@ export function accountOf(configDir: string | undefined, table: Record<string, s
 export function stateOf(meta: Record<string, unknown> | undefined): SessionState | undefined {
   if (meta === undefined) return undefined
   const d = meta.display_state
-  if (typeof d === 'string' && d in GLYPHS) return d as SessionState
+  if (typeof d === 'string' && Object.hasOwn(GLYPHS, d)) return d as SessionState
   // A record from before display_state: deliberately coarse, the session's next hook stamps the real state.
   if (meta.status === 'done') return 'done'
   if (meta.status === 'ended') return 'ended'

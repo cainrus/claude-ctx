@@ -131,10 +131,12 @@ const PATH_CHARS = /[A-Za-z0-9._@/-]+/
 /**
  * Folders the recent tool calls touched, newest first, at most six: absolute
  * paths under `home` from each call's input, cut before `node_modules` (a
- * worktree's links lead into the main checkout), none that starts with an
- * `ignore` prefix (`~/.claude` covers every profile's config dir).
+ * worktree's links lead into the main checkout), none under an `ignore`
+ * folder, and none in a config dir (`~/.claude`, `~/.claude-work2`, ...).
  */
 export function candidatesOf(inputs: readonly unknown[], home: string, ignore: readonly string[]): string[] {
+  const configDirs = `${home}/.claude`
+  const ignored = (p: string) => p.startsWith(configDirs) || ignore.some((i) => i !== '' && (p === i.replace(/\/+$/, '') || p.startsWith(i.endsWith('/') ? i : `${i}/`)))
   const re = new RegExp(`${home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/${PATH_CHARS.source}`, 'g')
   const found: string[] = []
   for (const input of inputs) {
@@ -143,7 +145,7 @@ export function candidatesOf(inputs: readonly unknown[], home: string, ignore: r
   }
   const out: string[] = []
   for (const p of found.reverse()) {
-    if (ignore.some((i) => i !== '' && p.startsWith(i))) continue
+    if (ignored(p)) continue
     if (!out.includes(p)) out.push(p)
     if (out.length === 6) break
   }

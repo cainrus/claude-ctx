@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -113,6 +113,18 @@ test('the barometer feed: schema 2, written whole, private', (t) => {
   })
   assert.equal(statSync(file).mode & 0o777, 0o600)
   assert.equal(statSync(join(root, 'ai-usage-barometer')).mode & 0o777, 0o700)
+})
+
+test('run through a link (an installed plugin\'s path), the helper still works', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'ctx-sl-link dir-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const linked = join(root, 'pkg')
+  symlinkSync(fileURLToPath(new URL('..', import.meta.url)), linked)
+  const dir = join(root, 'rl')
+  const input = { dir, account: '.claude-home', session: SID, at: 1, limits: [{ kind: 'five_hour', percentUsed: 9, resetsAt: RESET5 }] }
+  const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(linked, 'bin', 'statusline.ts'), 'rate'], { input: JSON.stringify(input), encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(JSON.parse(readFileSync(join(dir, '.claude-home.jsonl'), 'utf8')).five, 9)
 })
 
 test('bad input is exit 0 and silence', () => {

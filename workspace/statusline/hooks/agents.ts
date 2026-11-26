@@ -15,7 +15,8 @@ export function shortModel(model: string): string {
 /** 105077 -> `105k`, 1000000 -> `1M`. */
 export function humanTokens(n: number): string {
   if (n < 1000) return String(Math.max(0, Math.round(n)))
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`
+  // 999_700 rounds to a thousand k: that is 1M.
+  if (Math.round(n / 1000) < 1000) return `${Math.round(n / 1000)}k`
   const m = n / 1_000_000
   return `${m >= 10 ? Math.round(m) : Math.round(m * 10) / 10}M`
 }
