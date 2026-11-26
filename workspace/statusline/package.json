@@ -1,0 +1,11 @@
+{
+  "name": "@claude-ctx/statusline",
+  "version": "0.8.0",
+  "private": true,
+  "description": "The Claude Code status line from the engine's own figures, as a mod. A package of the claude-ctx plugin.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/cainrus/claude-ctx.git", "directory": "workspace/statusline" },
+  "engines": { "node": ">=22.18" },
+  "scripts": { "test": "node --test 'test/*.test.ts'" }
+}

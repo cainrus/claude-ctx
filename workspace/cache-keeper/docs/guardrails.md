@@ -49,7 +49,7 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/state.ts:157`](../src/state.ts#L157) measured, a fork after /compact sent the compacted 42k uncached and wrote none of it; a wake turn would write it all, which the person's own next turn pays anyway.
 - [`src/transcript.ts:65`](../src/transcript.ts#L65) an error turn under another name has all-zero usage; reading it would zero the context.
 - [`hooks/gate.ts:12`](../hooks/gate.ts#L12) Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
-- [`hooks/gate.ts:67`](../hooks/gate.ts#L67) UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
+- [`hooks/gate.ts:60`](../hooks/gate.ts#L60) UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
 - [`hooks/keepalive.ts:18`](../hooks/keepalive.ts#L18) `$.model.fork` has no timeout of its own (anthropics/claude-code#101446).
 - [`hooks/keepalive.ts:131`](../hooks/keepalive.ts#L131) the engine does not raise a plugin's own compaction in its own hooks (measured: "skipped: re-entry"), so gate.ts never sees this one and `compacted` is reported from here.
 - [`bin/cache-keeper.sh:8`](../bin/cache-keeper.sh#L8) Claude Code brings no Node of its own (the native install is one binary) and `/plugin install` checks none, so a missing or old one would fail without a word.
@@ -72,7 +72,7 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/transcript.ts:239`](../src/transcript.ts#L239) decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
 - [`src/transcript.ts:269`](../src/transcript.ts#L269) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
 - [`hooks/band.ts:21`](../hooks/band.ts#L21) status.ts imports this module too. Use its functions at call time only: a const of it read while this module loads is not initialised yet.
-- [`hooks/gate.ts:42`](../hooks/gate.ts#L42) a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts) and the status line (status.ts) are called from these hooks.
+- [`hooks/gate.ts:82`](../hooks/gate.ts#L82) a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts) and the status line (status.ts) are called from these hooks.
 - [`hooks/keepalive.ts:66`](../hooks/keepalive.ts#L66) not awaited: it resolves only once the turn starts, which is after the calling hook returns.
 - [`hooks/status.ts:89`](../hooks/status.ts#L89) not lastRequestAt: policy reads that as Claude Code's own clock (src/state.ts). cacheAnchorAt is the status line's own, written by Stop and by a fork ping that renewed the cache.
 <!-- /gen:guardrails -->

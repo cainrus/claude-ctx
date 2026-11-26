@@ -8,7 +8,7 @@
  * loads the plugin's mod; any failure lets the input through.
  */
 
-import type { EngineInterface, Register } from 'claude-code'
+import type { Chunk, EngineInterface, EventOf, EventResult, Register, StreamNext } from 'claude-code'
 // WORKAROUND: Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and
 // reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
 // @ts-ignore TS5097
@@ -38,7 +38,47 @@ async function askGate($: EngineInterface, text: string, turn = false): Promise<
   }
 }
 
+/** keeper alone, as its tests load it; the claude-ctx plugin root registers the same hooks beside its other packages'. */
 export const register: Register = on => {
+  registerKeeperOwn(on)
+  on('turn.start', ($, e, next) => {
+    keeperTurnStarted(e)
+    return next(e)
+  })
+  on('turn.step', async function* ($, e, next) {
+    return yield* keeperTurnStep($, e, next)
+  })
+}
+
+const began = new Map<string, string>()
+
+/** keeper's part of `turn.start`: the main turn's text, for the gate at its first request. */
+export function keeperTurnStarted(e: { agentId?: string; turnId: string; text: string }): void {
+  if (e.agentId === undefined) began.set(e.turnId, e.text)
+}
+
+// WORKAROUND: UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on
+// Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
+/** keeper's `turn.step` body; the plugin's one `turn.step` hook delegates to it (`yield*`). */
+export async function* keeperTurnStep($: EngineInterface, e: EventOf['turn.step'], next: StreamNext<'turn.step'>): AsyncGenerator<Chunk<'turn.step'>, EventResult<'turn.step'>> {
+  if (e.agentId === undefined && e.index === 0) {
+    const text = began.get(e.turnId) ?? ''
+    began.delete(e.turnId)
+    const reason = isPingTurn(text) ? await manualPing($) : await askGate($, text, true)
+    if (reason !== undefined) {
+      yield { kind: 'text', index: 0, text: reason }
+      yield { kind: 'stop', stopReason: 'end_turn', usage: null }
+      return { turnId: e.turnId, index: e.index, answer: reason, toolUses: [], stopReason: 'end_turn', usage: null }
+    }
+  }
+  if (e.agentId === undefined) await statusRequested($, e.turnId)
+  const step = yield* next(e)
+  if (e.agentId === undefined) statusStepAnswered(step?.usage)
+  return step
+}
+
+/** keeper's hooks on the events no other package of the plugin hooks; `turn.start` and `turn.step` are registered by whoever loads it. */
+export function registerKeeperOwn(on: Parameters<Register>[0]): void {
   // WARNING: a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts)
   // and the status line (status.ts) are called from these hooks.
   on('session.start', async ($, e, next) => {
@@ -56,32 +96,6 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => renderBand($, e, next, () => refresh($)))
-
-  const began = new Map<string, string>()
-
-  on('turn.start', ($, e, next) => {
-    if (e.agentId === undefined) began.set(e.turnId, e.text)
-    return next(e)
-  })
-
-  // WORKAROUND: UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on
-  // Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
-  on('turn.step', async function* ($, e, next) {
-    if (e.agentId === undefined && e.index === 0) {
-      const text = began.get(e.turnId) ?? ''
-      began.delete(e.turnId)
-      const reason = isPingTurn(text) ? await manualPing($) : await askGate($, text, true)
-      if (reason !== undefined) {
-        yield { kind: 'text', index: 0, text: reason }
-        yield { kind: 'stop', stopReason: 'end_turn', usage: null }
-        return { turnId: e.turnId, index: e.index, answer: reason, toolUses: [], stopReason: 'end_turn', usage: null }
-      }
-    }
-    if (e.agentId === undefined) await statusRequested($, e.turnId)
-    const step = yield* next(e)
-    if (e.agentId === undefined) statusStepAnswered(step?.usage)
-    return step
-  })
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     await keepaliveWaitStart($)

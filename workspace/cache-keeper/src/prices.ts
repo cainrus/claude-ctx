@@ -102,7 +102,7 @@ export function rowFor(model: string | undefined, prices: PriceTable): { key: st
   if (best === undefined) {
     best = Object.keys(prices).find((key) => key !== 'default' && !key.startsWith('claude-') && m.includes(key.toLowerCase()))
   }
-  return best === undefined ? { key: 'default', rate: prices.default ?? rate(5) } : { key: best, rate: prices[best] }
+  return best === undefined ? { key: 'default', rate: prices.default ?? rate(5) } : { key: best, rate: prices[best] ?? prices.default ?? rate(5) }
 }
 
 export function rateFor(model: string | undefined, prices: PriceTable, promptTokens = 0): Rate {
