@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { format, lineOf, nodeOk, refresh, statusRequested, statusStepAnswered, ttlOfUsage } from '../hooks/status.ts'
+import { format, lineOf, moneyText, nodeOk, refresh, statusRequested, statusStepAnswered, ttlOfUsage } from '../hooks/status.ts'
 import { decide, THRESHOLDS } from '../src/policy.ts'
 import { ttlOfUsage as ttlOfUsageSrc } from '../src/transcript.ts'
 import { assistantLine, SID, TTL_OF_USAGE_CASES, userLine } from './helpers.ts'
@@ -37,13 +37,23 @@ test('the money: spent on pings, the next turn read warm, and the pings left; co
   const s = session({ pingCostUsd: 0.17, warmTurnUsd: 0.05, coldTurnUsd: 0.98 })
   const l = pick(lineOf(s, { maxPings: 4 }, {}, T + 10 * MIN))
   assert.equal(l.holdUsd, 3 * 0.05)
-  assert.equal(format(l, 0), '◉ 09:00→~11:30  $0.17+$0.05+$0.15')
+  assert.equal(format(l, 0), '◉ 09:00→~11:30  (17+5+15)¢')
   // Final: nothing to hold, so the third sum is left out.
-  assert.equal(format(lineOf({ ...s, pingsSoFar: 4 }, { maxPings: 4 }, {}, T)!, 0), '◉ 09:00  $0.17+$0.05')
+  assert.equal(format(lineOf({ ...s, pingsSoFar: 4 }, { maxPings: 4 }, {}, T)!, 0), '◉ 09:00  (17+5)¢')
   assert.equal(format(cached(0, false, T, 0), 0), '◉ 08:00', 'a record from before the prices: no money shown')
   const cold = lineOf(s, {}, {}, T + 60 * MIN)
-  assert.deepEqual(cold, { kind: 'expired', nextColdUsd: 0.98 })
-  assert.equal(format(cold!, 0), '○ cold · next $0.98')
+  assert.deepEqual(cold, { kind: 'expired', nextColdUsd: 0.98, ctxTokens: 50_000 })
+  assert.equal(format(cold!, 0), '○ cold · ↺50k=98¢')
+})
+
+test('money takes one unit for the whole sum: cents while every part is under a dollar, else dollars without padding', () => {
+  assert.equal(moneyText([0.17, 0.05, 0.15]), '(17+5+15)¢')
+  assert.equal(moneyText([0.98]), '98¢')
+  assert.equal(moneyText([0.004]), '0¢')
+  assert.equal(moneyText([4.2, 1.24, 0.45]), '$(4.2+1.24+.45)')
+  assert.equal(moneyText([0.996]), '$1', 'a part that rounds to a dollar is written in dollars')
+  assert.equal(moneyText([1.5, 0]), '$(1.5+0)')
+  assert.equal(moneyText([12.3]), '$12.3')
 })
 
 test('the far end is the earliest one: each ping adds minAgeSec, from env, config.json or the default', () => {
@@ -66,7 +76,7 @@ test('the time is local: the offset is applied to both ends', () => {
 })
 
 test("the session's ping cost reads from its record, at a cent's precision", () => {
-  assert.equal(format({ ...cached(1, true, T, 0.134), nextWarmUsd: 0.051, holdUsd: 0.051 }, 0), '◉ 08:00→~08:50  $0.13+$0.05+$0.05')
+  assert.equal(format({ ...cached(1, true, T, 0.134), nextWarmUsd: 0.051, holdUsd: 0.051 }, 0), '◉ 08:00→~08:50  (13+5+5)¢')
   assert.equal(pick(lineOf(session({ pingCostUsd: 0.2 }), {}, {}, T)).pingsUsd, 0.2)
   assert.equal(pick(lineOf(session({ pingCostUsd: 'x' }), {}, {}, T)).pingsUsd, 0)
 })
@@ -275,11 +285,13 @@ test('the warning window: the last 10 minutes of an hour, the last half of a 5-m
 
 test('the first-turn price of a new session is shown only after the cold price, and only when cheaper', () => {
   const cold = (extra: Record<string, unknown>) => lineOf(session({ coldTurnUsd: 0.98, ...extra }), {}, {}, T + H)!
-  assert.deepEqual(cold({ coldStartUsd: 0.3 }), { kind: 'expired', nextColdUsd: 0.98, coldStartUsd: 0.3 })
-  assert.equal(format(cold({ coldStartUsd: 0.3 }), 0), '○ cold · next $0.98 ⇄$0.30')
-  assert.deepEqual(cold({ coldStartUsd: 0.98 }), { kind: 'expired', nextColdUsd: 0.98 }, 'equal: advises nothing')
-  assert.deepEqual(cold({ coldStartUsd: 1.5 }), { kind: 'expired', nextColdUsd: 0.98 })
-  assert.deepEqual(cold({}), { kind: 'expired', nextColdUsd: 0.98 })
+  assert.deepEqual(cold({ coldStartUsd: 0.3 }), { kind: 'expired', nextColdUsd: 0.98, ctxTokens: 50_000, coldStartUsd: 0.3 })
+  assert.equal(format(cold({ coldStartUsd: 0.3 }), 0), '○ cold · ↺50k=98¢ ⇄≥30¢')
+  assert.deepEqual(cold({ coldStartUsd: 0.98 }), { kind: 'expired', nextColdUsd: 0.98, ctxTokens: 50_000 }, 'equal: advises nothing')
+  assert.deepEqual(cold({ coldStartUsd: 1.5 }), { kind: 'expired', nextColdUsd: 0.98, ctxTokens: 50_000 })
+  assert.deepEqual(cold({}), { kind: 'expired', nextColdUsd: 0.98, ctxTokens: 50_000 })
+  assert.equal(format(cold({ ctxTokens: 'x' }), 0), '○ cold · ↺98¢', 'no context size on record: the price alone')
+  assert.equal(format(cold({ ctxTokens: 277_400 }), 0), '○ cold · ↺277k=98¢')
   assert.deepEqual(lineOf(session({ coldStartUsd: 0.3 }), {}, {}, T + H), { kind: 'expired' }, 'no cold price: no first-turn price')
   const warm = pick(lineOf(session({ coldTurnUsd: 0.98, warmTurnUsd: 0.05, coldStartUsd: 0.3 }), {}, {}, T + MIN))
   assert.equal(format(warm, 0).includes('⇄'), false, 'warm: no ⇄')

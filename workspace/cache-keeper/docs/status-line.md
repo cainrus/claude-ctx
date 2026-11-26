@@ -16,10 +16,11 @@ Every form it takes, printed by the real `format()`:
 
 <!-- gen:status-lines -->
 - `○ ready`: keeper is on; no request seen in this session yet (a resumed session too).
-- `◉ 14:05→~16:35  $0.17+$0.05+$0.15`: the cache stays warm until 14:05 for sure, and keeper can extend it: if every ping left in this stretch (3 here) goes out, it holds until about 16:35. That end is the earliest one: a ping goes out once the cache is `minAgeSec` old (50 min) and renews it from then. The money: $0.17 this session's pings cost so far, $0.05 the next turn's prompt read from this cache, $0.15 the pings left (each a read of the context). A ping still needs you back within `awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all.
-- `◉ 14:05  $0.17+$0.05`: no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final.
-- `○ cold · next $0.98`: the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now.
-- `○ cold · next $0.98 ⇄$0.30`: the same, and a new session would pay $0.30 for its first turn (its start prompt, written anew): the floor of a handoff, shown only when it is cheaper.
+- `◉ 14:05→~16:35  (17+5+15)¢`: the cache stays warm until 14:05 for sure, and keeper can extend it: if every ping left in this stretch (3 here) goes out, it holds until about 16:35. That end is the earliest one: a ping goes out once the cache is `minAgeSec` old (50 min) and renews it from then. The money: $0.17 this session's pings cost so far, $0.05 the next turn's prompt read from this cache, $0.15 the pings left (each a read of the context). A ping still needs you back within `awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all.
+- `◉ 14:05  (17+5)¢`: no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final.
+- `◉ 14:05  $(1.24+.45)`: the same sums once one of them reaches a dollar: the whole sum moves to dollars, $1.24 and $0.45.
+- `○ cold · ↺277k=98¢`: the cache went cold; the next turn writes the whole context, 277k tokens, anew at $0.98. Switching model costs nothing extra now.
+- `○ cold · ↺277k=98¢ ⇄≥30¢`: the same, and a new session would pay at least $0.30 for its first turn (its start prompt, written anew; the brief and the files it rereads come on top): the floor of a handoff, shown only when it is cheaper.
 - `error: needs Node.js ≥ 22.18`: `node` on `PATH` is missing or too old to run the hooks, so keeper does nothing.
 - `error: record failed · ~/.claude-cache-keeper/errors.log`: a hook of this session threw. Hooks still exit 0 (a session is never broken by keeper), but each failure is logged there, counted by `report`, shown by `/ctx:status`, and, without mods, told once an hour on the session's next prompt. The line goes away once a turn is recorded cleanly.
 - `(nothing)`: keeper is off, or `"statusLine": false`.
@@ -38,7 +39,7 @@ the session's next prompt gets one notice, at most once an hour.
 
 <!-- gen:module hooks/band.ts -->
 Where the mod loads, the status line moves above the prompt as a row of
-buttons, `◉ 14:05→~16:35 ↻3 $0.17+$0.05+$0.15 ✓ ?`, and the status line keeps
+buttons, `◉ 14:05→~16:35 ↻3 (17+5+15)¢ ✓ ?`, and the status line keeps
 errors only:
 
 - `◉ 14:05→~16:35` and the money after it: as on the status line above;

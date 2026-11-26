@@ -1,6 +1,6 @@
 /**
  * Where the mod loads, the status line moves above the prompt as a row of
- * buttons, `◉ 14:05→~16:35 ↻3 $0.17+$0.05+$0.15 ✓ ?`, and the status line keeps
+ * buttons, `◉ 14:05→~16:35 ↻3 (17+5+15)¢ ✓ ?`, and the status line keeps
  * errors only:
  *
  * - `◉ 14:05→~16:35` and the money after it: as on the status line above;
@@ -35,8 +35,8 @@ export interface BandView {
 
 export const LEGEND = [
   '◉ 14:05→~16:35  warm till 14:05 for sure, till about 16:35 if every ping left goes out; `final`: no ping is coming',
-  '$a+$b+$c  a: this session\'s pings so far · b: the next turn read from this cache · c: the pings left',
-  '○ cold · next $X ⇄$Y  the next turn writes the whole context anew, at $X; a new session would pay $Y for its first turn',
+  '(a+b+c)¢  a: this session\'s pings so far · b: the next turn read from this cache · c: the pings left; one unit for the whole sum, $(…) once a part reaches a dollar',
+  '○ cold · ↺N=X ⇄≥Y  the next turn writes the whole context (N tokens) anew, at X; a new session would pay at least Y for its first turn',
   'yellow time: the cache ends soon (10 minutes, or half the bucket when that is shorter) · green cold: switching model is free now',
   '↻N ping now (N left) · ✓ stop keeping this session · ? pin this legend',
 ].join('\n')

@@ -58,7 +58,9 @@ export type Line =
       kind: 'expired'
       /** The next turn's prompt written into a new cache, USD; undefined in a record from before 0.6.7. */
       nextColdUsd?: number
-      /** A new session's first turn, USD; present only when it is cheaper than `nextColdUsd`. */
+      /** The context that next turn rewrites, tokens; present only with `nextColdUsd`. */
+      ctxTokens?: number
+      /** A new session's first turn, USD, a floor; present only when it is cheaper than `nextColdUsd`. */
       coldStartUsd?: number
     }
 
@@ -94,9 +96,12 @@ export function lineOf(
   const nextColdUsd = num(session?.coldTurnUsd)
   if (now >= warmUntil) {
     if (nextColdUsd === undefined) return { kind: 'expired' }
+    const cold: Line = { kind: 'expired', nextColdUsd }
+    const ctxTokens = num(session?.ctxTokens)
+    if (ctxTokens !== undefined) cold.ctxTokens = ctxTokens
     const coldStartUsd = num(session?.coldStartUsd)
-    if (coldStartUsd !== undefined && coldStartUsd < nextColdUsd) return { kind: 'expired', nextColdUsd, coldStartUsd }
-    return { kind: 'expired', nextColdUsd }
+    if (coldStartUsd !== undefined && coldStartUsd < nextColdUsd) cold.coldStartUsd = coldStartUsd
+    return cold
   }
   // INVARIANT: mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
   const max = envNum(env.maxPings) ?? num(config.maxPings) ?? num(tuning?.maxPings) ?? DEFAULT_MAX_PINGS
@@ -116,7 +121,13 @@ export function lineOf(
   return line
 }
 
-const usd = (v: number): string => `$${v.toFixed(2)}`
+/** `[0.17, 0.05]` -> `(17+5)¢`, `[4.2, 0.45]` -> `$(4.2+.45)`: one unit for the whole sum, so the line spends no glyph on repeats. */
+export function moneyText(parts: number[]): string {
+  const cents = parts.map((v) => Math.round(v * 100))
+  const wrap = (xs: string[]) => (xs.length === 1 ? xs[0]! : `(${xs.join('+')})`)
+  if (cents.every((c) => c < 100)) return `${wrap(cents.map(String))}¢`
+  return `$${wrap(cents.map((c) => (c / 100).toFixed(2).replace(/\.?0+$/, '').replace(/^0(?=\.)/, '')))}`
+}
 
 const hhmmAt = (at: number, offsetMin: number): string => {
   const local = new Date(at - offsetMin * 60_000)
@@ -131,17 +142,17 @@ export function timeText(l: Line, offsetMin: number): string {
   return l.heldUntil > l.warmUntil ? `◉ ${sure}→~${hhmmAt(l.heldUntil, offsetMin)}` : `◉ ${sure}`
 }
 
-/** The money part: `$spent+$next turn warm+$hold to the end` (the last only with pings coming), or `next $X` (and `⇄$Y`, a new session's first turn) once cold. */
+/** The money part: `(spent+next turn warm+hold to the end)¢` (the last only with pings coming), or `↺Nk=X` (the whole context rewritten; and `⇄≥Y`, the floor of a new session's first turn) once cold; units by moneyText. */
 export function costText(l: Line): string | undefined {
   if (l.kind === 'ready') return undefined
   if (l.kind === 'expired') {
     if (l.nextColdUsd === undefined) return undefined
-    const next = `next ${usd(l.nextColdUsd)}`
-    return l.coldStartUsd === undefined ? next : `${next} ⇄${usd(l.coldStartUsd)}`
+    const size = l.ctxTokens === undefined ? '' : `${Math.round(l.ctxTokens / 1000)}k=`
+    const next = `↺${size}${moneyText([l.nextColdUsd])}`
+    return l.coldStartUsd === undefined ? next : `${next} ⇄≥${moneyText([l.coldStartUsd])}`
   }
   if (l.nextWarmUsd === undefined) return undefined
-  const parts = [l.pingsUsd, l.nextWarmUsd, ...(l.holdUsd ? [l.holdUsd] : [])]
-  return parts.map(usd).join('+')
+  return moneyText([l.pingsUsd, l.nextWarmUsd, ...(l.holdUsd ? [l.holdUsd] : [])])
 }
 
 export function format(l: Line, offsetMin: number): string {
@@ -175,10 +186,14 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
     text: format({ kind: 'cached', left: 0, extends: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0 }, 0),
     meaning: 'no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final',
   },
-  { text: format({ kind: 'expired', nextColdUsd: 0.98 }, 0), meaning: 'the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now' },
   {
-    text: format({ kind: 'expired', nextColdUsd: 0.98, coldStartUsd: 0.3 }, 0),
-    meaning: 'the same, and a new session would pay $0.30 for its first turn (its start prompt, written anew): the floor of a handoff, shown only when it is cheaper',
+    text: format({ kind: 'cached', left: 0, extends: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 1.24, nextWarmUsd: 0.45, holdUsd: 0 }, 0),
+    meaning: 'the same sums once one of them reaches a dollar: the whole sum moves to dollars, $1.24 and $0.45',
+  },
+  { text: format({ kind: 'expired', nextColdUsd: 0.98, ctxTokens: 277_000 }, 0), meaning: 'the cache went cold; the next turn writes the whole context, 277k tokens, anew at $0.98. Switching model costs nothing extra now' },
+  {
+    text: format({ kind: 'expired', nextColdUsd: 0.98, ctxTokens: 277_000, coldStartUsd: 0.3 }, 0),
+    meaning: 'the same, and a new session would pay at least $0.30 for its first turn (its start prompt, written anew; the brief and the files it rereads come on top): the floor of a handoff, shown only when it is cheaper',
   },
   { text: NODE_ERROR, meaning: '`node` on `PATH` is missing or too old to run the hooks, so keeper does nothing' },
   {

@@ -36,7 +36,7 @@ test('the row: time, pings left, done and the legend button', () => {
 
 test('the row carries the range and the money as the status line prints them', () => {
   const parts = partsOf(view({}, { heldUntil: T + 150 * 60_000, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0.15 }), false)
-  assert.deepEqual(parts.slice(0, 3), [{ text: '◉ 08:00→~10:30' }, { key: 'ping', label: '↻3' }, { text: '$0.17+$0.05+$0.15', dim: true }])
+  assert.deepEqual(parts.slice(0, 3), [{ text: '◉ 08:00→~10:30' }, { key: 'ping', label: '↻3' }, { text: '(17+5+15)¢', dim: true }])
 })
 
 test('no ping coming reads final; a running turn holds the ping button back', () => {
@@ -47,7 +47,7 @@ test('no ping coming reads final; a running turn holds the ping button back', ()
 test('a muted session shows done, not a button; cold and fresh lines have only the legend', () => {
   assert.deepEqual(partsOf(view({ muted: true }, { extends: false }), false)[2], { text: '✓ done', dim: true })
   assert.deepEqual(partsOf(view({ line: { kind: 'expired' } }), false), [{ text: '○ cold', color: 'success' }, { key: 'help', label: '?' }])
-  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98 } }), false), [{ text: '○ cold · next $0.98', color: 'success' }, { key: 'help', label: '?' }])
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98 } }), false), [{ text: '○ cold · ↺98¢', color: 'success' }, { key: 'help', label: '?' }])
   assert.deepEqual(partsOf(view({ line: { kind: 'ready' } }), false), [{ text: '○ ready' }, { key: 'help', label: '?' }])
 })
 
@@ -58,11 +58,13 @@ test('the time goes yellow in the warning window, and nowhere else', () => {
 })
 
 test('the cold row is green and carries the first-turn price of a new session', () => {
-  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98, coldStartUsd: 0.3 } }), false)[0], { text: '○ cold · next $0.98 ⇄$0.30', color: 'success' })
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98, ctxTokens: 277_000, coldStartUsd: 0.3 } }), false)[0], { text: '○ cold · ↺277k=98¢ ⇄≥30¢', color: 'success' })
 })
 
 test('the legend says what the colours and the new-session price mean', () => {
-  assert.match(LEGEND, /⇄\$Y/)
+  assert.match(LEGEND, /↺N=X ⇄≥Y/)
+  assert.match(LEGEND, /at least Y/)
+  assert.match(LEGEND, /one unit for the whole sum/)
   assert.match(LEGEND, /yellow time: the cache ends soon \(10 minutes, or half the bucket when that is shorter\)/)
   assert.match(LEGEND, /green/)
 })
@@ -74,7 +76,7 @@ test('a coloured part reaches the Text element as its colour; a plain one carrie
   assert.equal(find(warm, (n) => n.tag === 'Text' && n.children[0] === '◉ 08:00')?.props.color, 'warning')
   setBand($ as never, view({ line: { kind: 'expired', nextColdUsd: 0.98 } }))
   const cold = await renderBand($ as never, e, next, async () => {})
-  assert.equal(find(cold, (n) => n.tag === 'Text' && n.children[0] === '○ cold · next $0.98')?.props.color, 'success')
+  assert.equal(find(cold, (n) => n.tag === 'Text' && n.children[0] === '○ cold · ↺98¢')?.props.color, 'success')
   setBand($ as never, view())
   const plain = await renderBand($ as never, e, next, async () => {})
   assert.equal('color' in (find(plain, (n) => n.tag === 'Text' && n.children[0] === '◉ 08:00')?.props ?? {}), false)

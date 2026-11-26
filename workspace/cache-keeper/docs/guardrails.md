@@ -33,9 +33,9 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`hooks/keepalive.ts:215`](../hooks/keepalive.ts#L215) not while an answered question's turn runs: nothing arms until its turn.complete.
 - [`hooks/keepalive.ts:221`](../hooks/keepalive.ts#L221) never a second request on top of a fork that went out, even when the CLI did not record it.
 - [`hooks/status.ts:23`](../hooks/status.ts#L23) a missing TTL reads as one hour: a wrong guess that way stays silent, the other way tells a person to pay for a re-read they did not need.
-- [`hooks/status.ts:101`](../hooks/status.ts#L101) mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
-- [`hooks/status.ts:207`](../hooks/status.ts#L207) src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
-- [`hooks/status.ts:266`](../hooks/status.ts#L266) every failure clears the line: a status must never break a session.
+- [`hooks/status.ts:106`](../hooks/status.ts#L106) mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
+- [`hooks/status.ts:222`](../hooks/status.ts#L222) src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
+- [`hooks/status.ts:281`](../hooks/status.ts#L281) every failure clears the line: a status must never break a session.
 - [`bin/cache-keeper.sh:45`](../bin/cache-keeper.sh#L45) reads "off" as src/config.ts does (env first, trimmed, any case, and it turns keeper back on over the file; else a top-level "enabled" of false/"false"/"no"/"off"/"0"); nested objects are cut out first (handoff's own "enabled").
 - [`bin/cache-keeper.ts:98`](../bin/cache-keeper.ts#L98) a hook must never break the session it runs in: any failure is exit 0 and leaves a trace (errors.ts).
 
@@ -74,5 +74,5 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`hooks/band.ts:21`](../hooks/band.ts#L21) status.ts imports this module too. Use its functions at call time only: a const of it read while this module loads is not initialised yet.
 - [`hooks/gate.ts:42`](../hooks/gate.ts#L42) a plugin loads one hooks module with one hook per event, so the fork pings (keepalive.ts) and the status line (status.ts) are called from these hooks.
 - [`hooks/keepalive.ts:66`](../hooks/keepalive.ts#L66) not awaited: it resolves only once the turn starts, which is after the calling hook returns.
-- [`hooks/status.ts:87`](../hooks/status.ts#L87) not lastRequestAt: policy reads that as Claude Code's own clock (src/state.ts). cacheAnchorAt is the status line's own, written by Stop and by a fork ping that renewed the cache.
+- [`hooks/status.ts:89`](../hooks/status.ts#L89) not lastRequestAt: policy reads that as Claude Code's own clock (src/state.ts). cacheAnchorAt is the status line's own, written by Stop and by a fork ping that renewed the cache.
 <!-- /gen:guardrails -->
