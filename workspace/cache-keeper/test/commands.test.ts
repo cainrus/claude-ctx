@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DONE_COMMAND, DONE_REPLY, end, isDoneCommand, isWakePrompt, record, touch, TRANSCRIPT_CATCH_UP_MS, wake, WAKE_MESSAGE } from '../src/commands.ts'
+import { DONE_COMMAND, DONE_REPLY, end, isDoneCommand, isWakePrompt, person, record, touch, TRANSCRIPT_CATCH_UP_MS, wake, WAKE_MESSAGE } from '../src/commands.ts'
 import { readLedger } from '../src/ledger.ts'
 import { THRESHOLDS as T } from '../src/policy.ts'
 import { rateFor } from '../src/prices.ts'
-import { compactedSinceRequest, loadAwayBudget, loadSession, newSession, saveAwayBudget, saveSession } from '../src/state.ts'
+import { compactedSinceRequest, loadAwayBudget, loadSession, newSession, personPath, readJson, saveAwayBudget, saveSession, sessionPath, type PersonFacts } from '../src/state.ts'
 import { assistantLine, configFor, FIXTURES, makeCtx, MIN, SID, tempHome, userLine, writeLines, writeTranscript } from './helpers.ts'
 
 const T0 = Date.parse('2026-01-01T10:00:00.000Z')
@@ -342,6 +342,15 @@ test('end: deletes the session state; a sleeper afterwards finds nothing', () =>
   assert.equal(wake({ session_id: SID }, makeCtx(config, T0 + WARM_ENOUGH)), 0)
 })
 
+test('end: also removes persons/<id>.json; a missing one is fine', () => {
+  const { home, config } = setup()
+  person({ session_id: SID, at: T0, person: true }, makeCtx(config, T0))
+  assert.ok(personFacts(home))
+  assert.equal(end({ session_id: SID }, makeCtx(config, T0)), 0)
+  assert.equal(personFacts(home), undefined)
+  assert.equal(end({ session_id: SID }, makeCtx(config, T0)), 0)
+})
+
 // --- the whole loop ----------------------------------------------------------
 
 test('loop: pings every ~50 min while hits keep landing, stops at the per-stretch budget', () => {
@@ -576,4 +585,123 @@ test('record: a first request out of the scan cap is remembered as not found, no
   const s = loadSession(home, SID)!
   assert.equal(s.coldStartTokens, 0)
   assert.equal(s.coldStartUsd, undefined)
+})
+
+// --- person ------------------------------------------------------------------
+
+const personFacts = (home: string, sid = SID) => readJson<PersonFacts>(personPath(home, sid))
+
+test('person: a person prompt writes persons/<id>.json and never touches sessions/<id>.json', () => {
+  const { home, config } = setup()
+  const sessionFile = readFileSync(sessionPath(home, SID), 'utf8')
+  person({ session_id: SID, at: T0 + 7_000, person: true, command: 'handoff' }, makeCtx(config, T0 + 9_000))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 7_000, personAt: T0 + 7_000, personCommand: 'handoff' })
+  assert.equal(readFileSync(sessionPath(home, SID), 'utf8'), sessionFile)
+})
+
+test('person: a later person prompt with no command clears personCommand', () => {
+  const { home, config } = setup()
+  person({ session_id: SID, at: T0 + 1_000, person: true, command: 'handoff' }, makeCtx(config, T0 + 1_000))
+  person({ session_id: SID, at: T0 + 2_000, person: true }, makeCtx(config, T0 + 2_000))
+  const f = personFacts(home)!
+  assert.equal(f.personAt, T0 + 2_000)
+  assert.ok(!('personCommand' in f))
+})
+
+test('person: a machine prompt updates promptAt and keeps personAt and personCommand', () => {
+  const { home, config } = setup()
+  person({ session_id: SID, at: T0 + 1_000, person: true, command: 'handoff' }, makeCtx(config, T0 + 1_000))
+  person({ session_id: SID, at: T0 + 5_000, person: false, command: 'x' }, makeCtx(config, T0 + 5_000))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 5_000, personAt: T0 + 1_000, personCommand: 'handoff' })
+})
+
+test('person: a machine prompt before any person prompt sets promptAt alone', () => {
+  const { home, config } = setup()
+  person({ session_id: SID, at: T0 + 1_000, person: false }, makeCtx(config, T0 + 1_000))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 1_000 })
+})
+
+test('person: a missing at falls back to the hook clock', () => {
+  const { home, config } = setup()
+  person({ session_id: SID, person: true }, makeCtx(config, T0 + 3_000))
+  assert.equal(personFacts(home)!.personAt, T0 + 3_000)
+})
+
+/** A background job's dir as Claude Code writes it: state.json keeps the prompt the job was started with. */
+function jobDir(intent: string): string {
+  const dir = tempHome()
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ state: 'working', intent }))
+  return dir
+}
+
+const LAUNCH = 'handoff-prompt: take the offer, then plan the work.'
+
+test('person: a background job\'s launch prompt sets promptAt alone, though stamped as typed', () => {
+  const { home, config } = setup()
+  const ctx = { ...makeCtx(config, T0 + 1_000), env: { CLAUDE_JOB_DIR: jobDir(LAUNCH) } }
+  person({ session_id: SID, at: T0 + 1_000, person: true, text: LAUNCH }, ctx)
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 1_000 })
+})
+
+test('person: a later typed prompt in that background job is the person\'s', () => {
+  const { home, config } = setup()
+  const env = { CLAUDE_JOB_DIR: jobDir(LAUNCH) }
+  person({ session_id: SID, at: T0 + 1_000, person: true, text: LAUNCH }, { ...makeCtx(config, T0 + 1_000), env })
+  person({ session_id: SID, at: T0 + 9_000, person: true, text: 'go on' }, { ...makeCtx(config, T0 + 9_000), env })
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 9_000, personAt: T0 + 9_000 })
+})
+
+test('person: a head and the full length tell the launch prompt apart; the same head of a longer prompt is the person\'s', () => {
+  const { home, config } = setup()
+  const env = { CLAUDE_JOB_DIR: jobDir(LAUNCH) }
+  person({ session_id: SID, at: T0 + 1_000, person: true, text: LAUNCH.slice(0, 10), text_length: LAUNCH.length }, { ...makeCtx(config, T0 + 1_000), env })
+  assert.equal(personFacts(home)!.personAt, undefined)
+  person({ session_id: SID, at: T0 + 2_000, person: true, text: LAUNCH.slice(0, 10), text_length: LAUNCH.length + 1 }, { ...makeCtx(config, T0 + 2_000), env })
+  assert.equal(personFacts(home)!.personAt, T0 + 2_000)
+})
+
+test('person: the launch text outside a background job, or a job dir without state.json, is the person\'s', () => {
+  for (const env of [{}, { CLAUDE_JOB_DIR: tempHome() }]) {
+    const { home, config } = setup()
+    person({ session_id: SID, at: T0 + 1_000, person: true, text: LAUNCH }, { ...makeCtx(config, T0 + 1_000), env })
+    assert.equal(personFacts(home)!.personAt, T0 + 1_000, JSON.stringify(env))
+  }
+})
+
+test('person: entered marks the person prompt stamped `at`, keeping the entry it replaced; refused puts that one back', () => {
+  const { home, config } = setup()
+  const ctx = (at: number) => makeCtx(config, at)
+  person({ session_id: SID, at: T0 + 1_000, person: true, command: 'deploy' }, ctx(T0 + 1_000))
+  person({ session_id: SID, at: T0 + 1_000, phase: 'entered' }, ctx(T0 + 1_100))
+  person({ session_id: SID, at: T0 + 5_000, person: true }, ctx(T0 + 5_000))
+  person({ session_id: SID, at: T0 + 5_000, phase: 'entered' }, ctx(T0 + 5_100))
+  assert.deepEqual(personFacts(home), {
+    promptAt: T0 + 5_000,
+    personAt: T0 + 5_000,
+    personEnteredAt: T0 + 5_000,
+    personEnteredBefore: { at: T0 + 1_000, command: 'deploy' },
+  })
+  person({ session_id: SID, at: T0 + 5_000, phase: 'refused' }, ctx(T0 + 5_200))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 5_000, personAt: T0 + 5_000, personEnteredAt: T0 + 1_000, personEnteredCommand: 'deploy' })
+})
+
+test('person: entered for a prompt that is not the person\'s (a launch prompt, a peer) or not the last one changes nothing', () => {
+  const { home, config } = setup()
+  const env = { CLAUDE_JOB_DIR: jobDir(LAUNCH) }
+  person({ session_id: SID, at: T0 + 1_000, person: true, text: LAUNCH }, { ...makeCtx(config, T0 + 1_000), env })
+  person({ session_id: SID, at: T0 + 1_000, phase: 'entered' }, makeCtx(config, T0 + 1_100))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 1_000 })
+  person({ session_id: SID, at: T0 + 2_000, phase: 'refused' }, makeCtx(config, T0 + 2_100))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 1_000 }, 'a refusal of an entry that is not there is nothing')
+  person({ session_id: SID, at: T0 + 1_000, phase: 'later' as never }, makeCtx(config, T0 + 2_200))
+  assert.deepEqual(personFacts(home), { promptAt: T0 + 1_000 }, 'a phase this keeper does not know changes nothing')
+  person({ session_id: 'fresh', at: T0, phase: 'entered' }, makeCtx(config, T0))
+  assert.equal(personFacts(home, 'fresh'), undefined, 'no record: nothing to mark')
+})
+
+test('person: an unknown session gets its own file and no session record', () => {
+  const home = tempHome()
+  person({ session_id: 'fresh', at: T0, person: true }, makeCtx(configFor(home), T0))
+  assert.equal(personFacts(home, 'fresh')!.personAt, T0)
+  assert.equal(loadSession(home, 'fresh'), undefined)
 })

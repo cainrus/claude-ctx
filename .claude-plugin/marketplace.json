@@ -12,7 +12,7 @@
       "name": "ctx",
       "source": "./",
       "description": "Keeps an idle session's prompt cache warm (Stop hook with asyncRewake or fork pings, gated by presence, cache age and budgets) and draws the status line from the engine's context, rate-limit and cost figures.",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "category": "productivity",
       "keywords": ["prompt-cache", "keep-alive", "status-line", "hooks", "cost"]
     }

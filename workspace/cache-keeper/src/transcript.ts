@@ -113,7 +113,8 @@ export function requestStartFromLine(line: string): number | undefined {
   return Number.isFinite(ts) ? ts : undefined
 }
 
-function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean): void {
+/** Visits the file's lines newest first, reading ever larger chunks from the end; `visit` returns true to stop. */
+export function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean): void {
   let fd: number
   try {
     fd = openSync(transcriptPath, 'r')

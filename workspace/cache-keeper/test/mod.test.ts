@@ -12,8 +12,8 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { record } from '../src/commands.ts'
 import { readLedger } from '../src/ledger.ts'
-import { loadSession } from '../src/state.ts'
-import { register } from '../hooks/gate.ts'
+import { loadSession, personPath, readJson, type PersonFacts } from '../src/state.ts'
+import { personWritesSettled, register } from '../hooks/gate.ts'
 import { manualPing } from '../hooks/keepalive.ts'
 import { refresh } from '../hooks/status.ts'
 import { configFor, makeCtx, MIN, PLUGIN_ROOT, SID, tempHome, writeTranscript } from './helpers.ts'
@@ -268,4 +268,176 @@ test('gate: a turn.step result that names a 5-minute write makes the status line
   const five = await step({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
   assert.ok(five.startsWith(`◉ ${hhmm(now + 5 * MIN)}`), five)
   assert.ok(!five.includes('→~'), 'a 5-minute end has no held end')
+})
+
+// --- the gate's prompt.submit: who typed ---------------------------------------------
+
+const personFacts = (home: string) => readJson<PersonFacts>(personPath(home, SID))
+
+/** Runs the hook and waits for its writes; `seen` is persons/<id>.json as next(e) found it on disk; `answer` is what next(e) resolves to. */
+async function submit(hooks: Record<string, Handler>, $: unknown, home: string, e: Record<string, unknown>, answer?: Record<string, unknown>) {
+  const seen: (PersonFacts | undefined)[] = []
+  const result = await hooks['prompt.submit']($, { text: 'hi', wait: false, ...e }, async (x: { text: string }) => {
+    seen.push(personFacts(home))
+    return answer ?? { text: x.text }
+  })
+  await personWritesSettled()
+  return { result, seen }
+}
+
+test('gate: a prompt the engine stamps as the person\'s own sets personAt and its command, before next', async () => {
+  const { home } = session()
+  const { $, calls } = fakeEngine(home, HIT)
+  for (const [kind, command] of [['composer', 'handoff'], ['bridge', undefined]] as const) {
+    const before = Date.now()
+    const { result, seen } = await submit(hooksOf(), $, home, { origin: { kind }, ...(command ? { command: { name: command, args: '' } } : {}) })
+    assert.deepEqual(result, { text: 'hi' })
+    assert.ok(seen[0]!.personAt! >= before, `${kind}: written before next(e)`)
+    const f = personFacts(home)!
+    assert.equal(f.personCommand, command, kind)
+    assert.equal(f.promptAt, f.personAt, kind)
+    assert.equal(f.personEnteredAt, f.personAt, `${kind}: it entered`)
+    assert.equal(f.personEnteredCommand, command, kind)
+  }
+  assert.deepEqual(calls, ['person', 'person', 'person', 'person'], 'through the CLI: the prompt, then its entry')
+})
+
+test('gate: a person prompt a hook beneath drops sets personAt but not personEnteredAt', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  await submit(hooksOf(), $, home, { origin: { kind: 'composer' } })
+  const entered = personFacts(home)!.personEnteredAt!
+  const { result } = await submit(hooksOf(), $, home, { origin: { kind: 'composer' }, text: 'cold' }, { drop: 'Cold session: NOT sent' })
+  assert.deepEqual(result, { drop: 'Cold session: NOT sent' })
+  const f = personFacts(home)!
+  assert.ok(f.personAt! >= entered)
+  assert.equal(f.personEnteredAt, entered, 'the blocked prompt is no person going on here')
+})
+
+test("gate: a person prompt whose turn the gate answers itself is taken back to the entry before it", async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  const hooks = hooksOf()
+  await submit(hooks, $, home, { origin: { kind: 'composer' }, command: { name: 'deploy', args: '' } })
+  const before = personFacts(home)!
+  // the gate answers /ctx:status itself: its turn never reaches the model
+  await submit(hooks, $, home, { origin: { kind: 'composer' }, text: '/ctx:status', command: { name: 'ctx:status', args: '' } })
+  assert.ok(personFacts(home)!.personEnteredAt! > before.personEnteredAt!, 'entered once next(e) resolved')
+  const { modelCalled } = await runStep(hooks, $, '/ctx:status')
+  await personWritesSettled()
+  assert.equal(modelCalled, false)
+  const f = personFacts(home)!
+  assert.equal(f.personEnteredAt, before.personEnteredAt, 'back to the prompt before')
+  assert.equal(f.personEnteredCommand, 'deploy')
+  assert.equal(f.personCommand, 'ctx:status', 'personAt still says the person typed it')
+})
+
+test('gate: a person prompt that started no turn is not taken back by a later turn the gate refuses', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  const hooks = hooksOf()
+  // a local command: it entered, and no turn of its own follows
+  await submit(hooks, $, home, { origin: { kind: 'composer' }, text: '/cost', command: { name: 'cost', args: '' } })
+  const entered = personFacts(home)!.personEnteredAt!
+  // a peer's message starts the next turn, which the gate answers itself
+  await submit(hooks, $, home, { origin: { kind: 'peer' }, text: '/ctx:status' })
+  await runStep(hooks, $, '/ctx:status')
+  await personWritesSettled()
+  assert.equal(personFacts(home)!.personEnteredAt, entered)
+})
+
+test('gate: a next(e) that resolves to no object passes through untouched', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  const result = await hooksOf()['prompt.submit']($, { text: 'hi', wait: false, origin: { kind: 'composer' } }, async () => undefined)
+  await personWritesSettled()
+  assert.equal(result, undefined)
+})
+
+test('gate: a turn the gate lets through keeps its entry; a prompt typed over a running turn is never taken back', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  const hooks = hooksOf()
+  await submit(hooks, $, home, { origin: { kind: 'composer' }, text: 'go on' })
+  const entered = personFacts(home)!.personEnteredAt!
+  const { modelCalled } = await runStep(hooks, $, 'go on')
+  await personWritesSettled()
+  assert.equal(modelCalled, true)
+  assert.equal(personFacts(home)!.personEnteredAt, entered)
+})
+
+test('gate: a peer or a task notification still calls the CLI, as not the person; personAt stays', async () => {
+  const { home } = session()
+  const { $, calls } = fakeEngine(home, HIT)
+  await submit(hooksOf(), $, home, { origin: { kind: 'composer' }, command: { name: 'handoff', args: '' } })
+  const typed = personFacts(home)!
+  for (const kind of ['peer', 'peer-send-message', 'task-notification', 'unclassified']) {
+    const { result } = await submit(hooksOf(), $, home, { origin: { kind } })
+    assert.deepEqual(result, { text: 'hi' })
+  }
+  assert.equal(calls.length, 6, 'the person prompt and its entry, then one call per machine prompt')
+  assert.ok(calls.every(c => c === 'person'))
+  const f = personFacts(home)!
+  assert.equal(f.personAt, typed.personAt)
+  assert.equal(f.personCommand, 'handoff')
+  assert.ok(f.promptAt >= typed.promptAt)
+})
+
+test('gate: a background job\'s launch prompt, stamped as typed, sets no personAt; the next typed one does', async () => {
+  const { home } = session()
+  const job = tempHome()
+  // past PERSON_TEXT_CHARS: the mod sends the head and the length
+  const launch = `handoff-prompt: ${'take the offer. '.repeat(1500)}`
+  writeFileSync(join(job, 'state.json'), JSON.stringify({ intent: launch }))
+  const { $ } = fakeEngine(home, HIT, { CLAUDE_JOB_DIR: job })
+  await submit(hooksOf(), $, home, { origin: { kind: 'composer' }, text: launch })
+  const launched = personFacts(home)!
+  assert.equal(launched.personAt, undefined, 'the launch is no person, even past the gate\'s held-text cap')
+  await submit(hooksOf(), $, home, { origin: { kind: 'composer' }, text: 'go on' })
+  assert.ok(personFacts(home)!.personAt! >= launched.promptAt)
+})
+
+test('gate: two overlapping submits (a person, then a peer) keep personAt', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  const hooks = hooksOf()
+  const [a, b] = await Promise.all([
+    submit(hooks, $, home, { origin: { kind: 'composer' }, command: { name: 'handoff', args: '' } }),
+    submit(hooks, $, home, { origin: { kind: 'peer' } }),
+  ])
+  assert.deepEqual(a.result, { text: 'hi' })
+  assert.deepEqual(b.result, { text: 'hi' })
+  const f = personFacts(home)!
+  assert.ok(f.personAt !== undefined, 'personAt kept')
+  assert.equal(f.personCommand, 'handoff')
+})
+
+test('gate: a failing process run still lets the prompt through unchanged', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  $.process.run = async () => {
+    throw new Error('spawn failed')
+  }
+  const { result, seen } = await submit(hooksOf(), $, home, { origin: { kind: 'composer' }, command: { name: 'handoff', args: '' } })
+  assert.deepEqual(result, { text: 'hi' })
+  assert.deepEqual(seen, [undefined], 'next(e) ran once')
+  assert.equal(personFacts(home), undefined)
+})
+
+test('gate: a hung process run does not stall later prompts - each person write is raced against its own timer', async () => {
+  const { home } = session()
+  const { $ } = fakeEngine(home, HIT)
+  // an engine that ignores timeoutMs and never answers; the module's timer is $.clock.after
+  $.process.run = () => new Promise<never>(() => {})
+  $.clock.after = ((_ms: number, fn: () => void) => {
+    const t = setTimeout(fn, 20)
+    return { cancel: () => clearTimeout(t) }
+  }) as never
+  const hooks = hooksOf()
+  const started = Date.now()
+  for (let i = 0; i < 2; i++) {
+    const { result } = await submit(hooks, $, home, { origin: { kind: 'composer' } })
+    assert.deepEqual(result, { text: 'hi' }, `prompt ${i + 1} reached next(e)`)
+  }
+  assert.ok(Date.now() - started < 2_000, 'the chain advanced on the module timer')
 })

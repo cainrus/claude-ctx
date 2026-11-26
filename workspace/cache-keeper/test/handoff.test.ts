@@ -127,6 +127,14 @@ test('touch: back while the cache is still warm — the prompt passes and the br
   assert.equal(loadSession(home, SID)!.lastHumanAt, briefAt + 30 * MIN)
 })
 
+test('touch: 56 min after the brief turn is cold by readWarmth: the menu shows, the brief is not burned as warm', () => {
+  const { home, config, briefAt } = handedOff(SPAWN_ENV)
+  const { ctx, out } = touchCtx(config, briefAt + 56 * MIN)
+  touch({ session_id: SID, prompt: 'back' }, ctx)
+  assert.equal(out.json[0]?.decision, 'block')
+  assert.equal(loadRecord(home, SID)!.status, 'ready')
+})
+
 test('touch: a cold cache with a brief blocks the prompt, shows the menu and changes nothing else', () => {
   const { home, config, briefAt } = handedOff(SPAWN_ENV)
   const now = briefAt + 2 * HOUR

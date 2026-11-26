@@ -1,12 +1,15 @@
-/** The hook subcommands (record, wake, touch, gate, end): hook input plus an explicit context in, exit code out. */
+/** The hook subcommands (record, wake, touch, gate, person, end): hook input plus an explicit context in, exit code out. */
 
+import { rmSync } from 'node:fs'
 import type { Config } from './config.ts'
+import { askBlockIf, coldFacts, isMachinePrompt, keeperColdStop, slashCommandOf, type BlockIfAnswer, type BlockIfInput } from './cold-stop.ts'
 import { handoffMessage, interceptPrompt, requestHandoff, settleHandoff, wantsHandoff, type HandoffIO } from './handoff.ts'
 import { appendLedger, type RefusalReason } from './ledger.ts'
-import { takeNotices } from './notices.ts'
+import { postNotice, takeNotices } from './notices.ts'
 import { addPingCost, turnPrices } from './report.ts'
 import { statusReport } from './inspect.ts'
 import { decide, isAtKeyboard } from './policy.ts'
+import { isJobLaunchPrompt } from './presence.ts'
 import {
   closePing,
   compactedSinceRequest,
@@ -15,8 +18,12 @@ import {
   loadAwayBudget,
   loadSession,
   newSession,
+  personPath,
+  readJson,
   saveAwayBudget,
   saveSession,
+  writeJsonAtomic,
+  type PersonFacts,
   type SessionState,
 } from './state.ts'
 import { firstMainUsageSince, lastMainTurn, scanFirstMainUsage, type MainTurn } from './transcript.ts'
@@ -35,9 +42,31 @@ export interface HookInput {
   prompt?: string
   /** gate only: the mod is answering a model turn (turn.step), so a Stop will follow. */
   gate_turn?: boolean
+  /** person only: epoch ms the prompt was submitted. */
+  at?: number
+  /** person only: the prompt's origin is the person's own (composer or bridge). */
+  person?: boolean
+  /** person only: the prompt's slash command name, without the slash. */
+  command?: string
+  /** person only, with `person`: the prompt's text (its head, for a long one), to tell a background job's launch prompt apart. */
+  text?: string
+  /** person only: the whole prompt's length when `text` is its head. */
+  text_length?: number
+  /** person only: the prompt stamped `at` entered the session (no hook dropped it), or keeper's gate refused it after that. */
+  phase?: 'entered' | 'refused'
 }
 
 const GATE_STOP_WINDOW_MS = 30_000
+/** The longest from the prompt hook letting a prompt through to its turn's first request: the other prompt hooks run in between. */
+const PROMPT_HOOK_GATE_MS = 120_000
+/** How much of a prompt the stamp keeps: enough to tell the gate's ask for it from a command typed after it. */
+const PROMPT_HEAD_CHARS = 200
+
+/** The stamp's key: a slash command by its name (the gate may see it engine-tagged), any other prompt by its head. */
+function promptKey(prompt: string): string {
+  const command = slashCommandOf(prompt)
+  return command !== undefined ? `/${command}` : prompt.slice(0, PROMPT_HEAD_CHARS)
+}
 const PROMPT_STAMP_SLACK_MS = 5_000
 
 export interface Ctx {
@@ -59,6 +88,8 @@ export interface Ctx {
   background?: (transcriptPath?: string) => boolean
   /** The environment the config came from, for `/ctx:status`. Defaults to process.env. */
   env?: NodeJS.ProcessEnv
+  /** The `coldStop.blockIf` command, asked on every prompt keeper does not answer itself. */
+  blockIf?: (input: BlockIfInput) => BlockIfAnswer
 }
 
 const blockingSleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
@@ -389,18 +420,40 @@ export function touch(input: HookInput, ctx: Ctx, gate = false): number {
     return 0
   }
 
+  const prompt = input.prompt ?? ''
+  const blocked = (reason: string): number => {
+    if (gate && input.gate_turn) state.gateTurnAt = ctx.now
+    saveSession(home, state)
+    ctx.stdout?.(`${JSON.stringify({ decision: 'block', reason })}\n`)
+    return 0
+  }
+
+  // WARNING: the mod's gate asks at every turn's first request; the prompt the UserPromptSubmit hook let through just before
+  // met the stops there (blockIf asked once). Its stamp, matched by the text, is spent by that one ask.
+  const passed = state.promptHookPassed
+  const seenByPromptHook = gate && passed !== undefined && ctx.now - passed.at < PROMPT_HOOK_GATE_MS && promptKey(prompt) === passed.head
+  if (gate) delete state.promptHookPassed
+  const cs = ctx.config.coldStop
+  // the gate's text is cut at the mod's held-text cap: a launch prompt longer than that is matched by its head
+  const stopsOn = ctx.config.enabled && !seenByPromptHook && (cs.enabled || ctx.blockIf !== undefined) && !isMachinePrompt(prompt, ctx.env ?? process.env, gate)
+  const facts = stopsOn ? coldFacts(prompt, state, ctx.config, ctx.now, gate) : undefined
+  // WARNING: blockIf before the handoff menu: the menu marks its brief used as it answers, and a later hold would burn it.
+  const outside = facts && ctx.blockIf ? askBlockIf(prompt, state, ctx.config, ctx.now, facts, ctx.blockIf) : undefined
+  if (outside?.kind === 'block') return blocked(outside.reason)
+
   const stillHeld = (): boolean =>
     ctx.skipIf?.({ sessionId: sid, transcriptPath: state.transcriptPath, lastPromptAt: state.lastHumanAt }) === 'handoff'
   const background = ctx.background?.(state.transcriptPath) ?? false
-  const held = interceptPrompt(input.prompt ?? '', state, ctx.config, ctx.now, ctx.handoffIO, gate, stillHeld, background)
-  if (held?.kind === 'block') {
-    if (gate && input.gate_turn) {
-      state.gateTurnAt = ctx.now
-      saveSession(home, state)
-    }
-    ctx.stdout?.(`${JSON.stringify({ decision: 'block', reason: held.reason })}\n`)
-    return 0
-  }
+  // a pass skips the menu only once a stop showed the price; else the menu is the price
+  const skipMenu = outside?.kind === 'pass' && facts?.acked === true
+  const held = skipMenu ? undefined : interceptPrompt(prompt, state, ctx.config, ctx.now, ctx.handoffIO, gate, stillHeld, background)
+  if (held?.kind === 'block') return blocked(held.reason)
+
+  const stop = facts && outside === undefined && held === undefined ? keeperColdStop(state, ctx.config, ctx.now, facts, gate) : undefined
+  if (stop?.kind === 'block') return blocked(stop.reason)
+  if (!gate) state.promptHookPassed = { at: ctx.now, head: promptKey(prompt) }
+  // the gate's answer carries no context to the model: it reaches it with the next typed prompt, as the menu's does
+  if (gate && outside?.context) postNotice(home, outside.context, ctx.now, [sid])
 
   if (state.pingsSoFar > 0) {
     appendLedger(home, {
@@ -427,7 +480,7 @@ export function touch(input: HookInput, ctx: Ctx, gate = false): number {
   saveSession(home, state)
 
   const notes = gate ? [] : takeNotices(home, sid, ctx.now)
-  const context = [...notes, ...(held?.context ? [held.context] : [])]
+  const context = [...notes, ...(held?.context ? [held.context] : []), ...(!gate && outside?.context ? [outside.context] : [])]
   if (context.length > 0) {
     const out: Record<string, unknown> = {
       hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context.join('\n\n') },
@@ -443,8 +496,65 @@ export function gate(input: HookInput, ctx: Ctx): number {
   return touch(input, ctx, true)
 }
 
-/** SessionEnd: drop the session's state; a sleeper still pending finds nothing and exits 0. */
+/**
+ * The mod's `prompt.submit`, every prompt: sets `promptAt`; a prompt the mod passes as the person's own also sets
+ * `personAt` and `personCommand`, unless it is a background job's launch prompt.
+ */
+export function person(input: HookInput, ctx: Ctx): number {
+  const sid = input.session_id
+  if (!sid) return 0
+  const path = personPath(ctx.config.home, sid)
+  const at = typeof input.at === 'number' && Number.isFinite(input.at) ? input.at : ctx.now
+  if (input.phase !== undefined) {
+    const known = readJson<PersonFacts>(path)
+    // a phase a newer mod may send and this keeper does not know changes nothing
+    const change = input.phase === 'entered' ? enterPerson : input.phase === 'refused' ? refusePerson : undefined
+    const next = known && change?.(known, at)
+    if (next) writeJsonAtomic(path, next)
+    return 0
+  }
+  const facts: PersonFacts = { ...readJson<PersonFacts>(path), promptAt: at }
+  const textLength = typeof input.text_length === 'number' ? input.text_length : undefined
+  if (input.person === true && !isJobLaunchPrompt(input.text, ctx.env ?? process.env, textLength)) {
+    facts.personAt = at
+    if (typeof input.command === 'string' && input.command !== '') facts.personCommand = input.command
+    else delete facts.personCommand
+  }
+  writeJsonAtomic(path, facts)
+  return 0
+}
+
+/** Only the prompt `person` counted as the person's (its personAt is `at`) can enter: a launch prompt or a peer's never does. */
+function enterPerson(facts: PersonFacts, at: number): PersonFacts | undefined {
+  if (facts.personAt !== at || facts.personEnteredAt === at) return undefined
+  const next: PersonFacts = { ...facts, personEnteredAt: at }
+  if (facts.personEnteredAt !== undefined) {
+    next.personEnteredBefore = { at: facts.personEnteredAt, ...(facts.personEnteredCommand ? { command: facts.personEnteredCommand } : {}) }
+  } else delete next.personEnteredBefore
+  if (facts.personCommand) next.personEnteredCommand = facts.personCommand
+  else delete next.personEnteredCommand
+  return next
+}
+
+function refusePerson(facts: PersonFacts, at: number): PersonFacts | undefined {
+  if (facts.personEnteredAt !== at) return undefined
+  const next: PersonFacts = { ...facts }
+  delete next.personEnteredAt
+  delete next.personEnteredCommand
+  delete next.personEnteredBefore
+  const before = facts.personEnteredBefore
+  if (before) {
+    next.personEnteredAt = before.at
+    if (before.command) next.personEnteredCommand = before.command
+  }
+  return next
+}
+
+/** SessionEnd: drop the session's state and person facts; a sleeper still pending finds nothing and exits 0. */
 export function end(input: HookInput, ctx: Ctx): number {
-  if (input.session_id) deleteSession(ctx.config.home, input.session_id)
+  if (input.session_id) {
+    deleteSession(ctx.config.home, input.session_id)
+    rmSync(personPath(ctx.config.home, input.session_id), { force: true })
+  }
   return 0
 }

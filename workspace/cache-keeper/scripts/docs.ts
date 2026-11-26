@@ -8,6 +8,7 @@
  *
  *   settings          src/config.ts SETTINGS, defaults from settingsOf() on an empty config
  *   handoff-settings  the `handoff.*` part of the same list
+ *   cold-stop-settings  the `coldStop.*` part of it
  *   status-lines      hooks/status.ts STATUS_EXAMPLES, made by the real format()
  *   ledger-events     src/ledger.ts LEDGER_EVENTS, the table the event type is derived from
  *   module PATH       the module header of PATH (its first doc comment)
@@ -56,6 +57,7 @@ function settingsTable(rows: readonly SettingDoc[], keyOf: (s: SettingDoc) => st
 }
 
 const isHandoff = (s: SettingDoc): boolean => s.key?.startsWith('handoff.') === true
+const isColdStop = (s: SettingDoc): boolean => s.key?.startsWith('coldStop.') === true
 
 const REPO = join(DOCS_DIR, '..')
 
@@ -118,13 +120,18 @@ export const GENERATORS: Record<string, (arg?: string) => string> = {
   guardrails: () => guardrails(),
   settings: () =>
     `${settingsTable(
-      SETTINGS.filter((s) => !isHandoff(s)),
+      SETTINGS.filter((s) => !isHandoff(s) && !isColdStop(s)),
       (s) => s.key ?? '',
-    )}\n| ${code('handoff.*')} | | | see [Handoff](handoff.md) |`,
+    )}\n| ${code('handoff.*')} | | | see [Handoff](handoff.md) |\n| ${code('coldStop.*')} | | | see [Cold stop](cold-stop.md) |`,
   'handoff-settings': () =>
     settingsTable(
       SETTINGS.filter(isHandoff),
       (s) => (s.key ?? '').slice('handoff.'.length),
+    ),
+  'cold-stop-settings': () =>
+    settingsTable(
+      SETTINGS.filter(isColdStop),
+      (s) => (s.key ?? '').slice('coldStop.'.length),
     ),
   'status-lines': () => STATUS_EXAMPLES.map((e: { text: string; meaning: string }) => `- ${code(e.text)}: ${e.meaning}.`).join('\n'),
   'ledger-events': () =>

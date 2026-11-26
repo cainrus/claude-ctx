@@ -33,9 +33,11 @@ The gate: a `!` command, a built-in slash command and `/compact` reach the
 model without the `UserPromptSubmit` hook, so they would hit a cold cache with
 no menu. The gate asks keeper at the first model request of such a turn and
 before a manual `/compact`, and stops the input just as a typed prompt would be
-stopped: the menu when a handoff brief waits on a cold cache (`handoff.enabled`),
-or keeper's own answer to `/ctx:status`. It runs where Claude Code
-loads the plugin's mod; any failure lets the input through.
+stopped: the menu when a handoff brief waits on a cold cache (`handoff.enabled`), the
+cold stop (`coldStop.enabled`), or keeper's own answer to `/ctx:status`. A prompt the engine stamps as
+the person's own (typed, or via Remote Control) is noted as `personAt` in `persons/<id>.json`, save a background
+job's launch prompt, which the engine stamps as typed too. It runs
+where Claude Code loads the plugin's mod; any failure lets the input through.
 <!-- /gen:module -->
 
 ## Settings

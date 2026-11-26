@@ -28,6 +28,7 @@ Each page is short and stands alone; open the one the question is about.
 - [Status line](docs/status-line.md): every form of the line under the prompt (generated)
 - [Fork pings](docs/fork-pings.md): pinging with `$.model.fork` instead of a turn, compaction, waiting questions
 - [Handoff](docs/handoff.md): a brief before the cache dies and a menu when you come back cold
+- [Cold stop](docs/cold-stop.md): the first prompt into a cold session held with its price; `blockIf` for stops of your own; `status --json`
 - [Report](docs/report.md): the ledger, its events (generated) and `cache-keeper report`
 - [Results on one machine](docs/results.md): the author's ledger over 33 days
 - [Limitations](docs/limitations.md)

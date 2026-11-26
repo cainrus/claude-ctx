@@ -28,6 +28,22 @@ export interface Config {
   /** Shell command asked before each ping; exit 0 skips it, exit 3 hands off. */
   skipIf?: string
   handoff: HandoffConfig
+  coldStop: ColdStopConfig
+}
+
+/** Off unless switched on (src/cold-stop.ts). */
+export interface ColdStopConfig {
+  enabled: boolean
+  /** A cold turn cheaper than this goes through unheld. */
+  minUsd: number
+  /** A prompt within this long of a stop goes through. */
+  ackSec: number
+  /** Slash commands, by name without the slash (or its last `:` part), that go through a cold cache unheld. */
+  passCommands: string[]
+  /** Shell command asked on every prompt: exit 2 holds it, 3 lets it through. */
+  blockIf?: string
+  /** Appended to the stop's last line. */
+  hint?: string
 }
 
 /** Off unless switched on: it costs one extra turn per idle stretch. */
@@ -81,6 +97,12 @@ export const SETTINGS: readonly SettingDoc[] = Object.freeze([
   { key: 'handoff.spawnCommand', env: 'CTX_KEEPER_HANDOFF_SPAWN', meaning: 'shell command starting a new session; gets `CTX_KEEPER_BRIEF`, `CTX_KEEPER_SESSION_ID`, `CTX_KEEPER_TRANSCRIPT_PATH`, `CTX_KEEPER_CWD`; 45 s at most' },
   { key: 'handoff.closeAfterSpawn', env: 'CTX_KEEPER_HANDOFF_CLOSE', meaning: 'close the old session after a successful spawn' },
   { key: 'handoff.closeCommand', defaultText: 'SIGTERM to the session\'s `claude`', meaning: 'how to close it; gets `CTX_KEEPER_SESSION_ID`, `CTX_KEEPER_CLAUDE_PID`' },
+  { key: 'coldStop.enabled', env: 'CTX_KEEPER_COLD_STOP', meaning: 'hold the first prompt into a cold session, with its price (see [Cold stop](cold-stop.md))' },
+  { key: 'coldStop.minUsd', env: 'CTX_KEEPER_COLD_STOP_MIN_USD', meaning: 'a cold turn cheaper than this goes through unheld' },
+  { key: 'coldStop.ackSec', meaning: 'a prompt sent within this long of a stop goes through' },
+  { key: 'coldStop.passCommands', defaultText: '`["handoff", "session-end", "restart"]`', meaning: 'slash commands that go through a cold cache unheld, by name (a plugin\'s `ns:name` also by `name`); keeper\'s own always do' },
+  { key: 'coldStop.blockIf', env: 'CTX_KEEPER_BLOCK_IF', meaning: 'shell command asked on every prompt, cold or warm: exit 2 holds it with its stdout as the reason, exit 3 lets it through past the cold stop (see [Cold stop](cold-stop.md))' },
+  { key: 'coldStop.hint', meaning: 'text added to the stop\'s last line, say how to hand off instead' },
 ] satisfies SettingDoc[])
 
 export const THRESHOLD_ENV: Readonly<Record<keyof Thresholds, string>> = Object.freeze({
@@ -156,6 +178,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     forkPings: bool(env.CTX_KEEPER_FORK) ?? bool(file.forkPings) ?? true,
     skipIf: str(env.CTX_KEEPER_SKIP_IF) ?? str(file.skipIf),
     handoff: loadHandoff(env, file.handoff),
+    coldStop: loadColdStop(env, file.coldStop),
+  }
+}
+
+export const DEFAULT_PASS_COMMANDS: readonly string[] = Object.freeze(['handoff', 'session-end', 'restart'])
+
+function loadColdStop(env: NodeJS.ProcessEnv, raw: unknown): ColdStopConfig {
+  const f = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  const pass = Array.isArray(f.passCommands) ? f.passCommands.filter((c): c is string => typeof c === 'string' && c !== '').map((c) => c.replace(/^\//, '')) : undefined
+  return {
+    enabled: bool(env.CTX_KEEPER_COLD_STOP) ?? bool(f.enabled) ?? false,
+    minUsd: num(env.CTX_KEEPER_COLD_STOP_MIN_USD) ?? num(f.minUsd) ?? 0.5,
+    // 0 would hold every resend for good: the stop could never be answered
+    ackSec: (num(f.ackSec) ?? 0) >= 1 ? num(f.ackSec)! : 900,
+    passCommands: pass ?? [...DEFAULT_PASS_COMMANDS],
+    blockIf: str(env.CTX_KEEPER_BLOCK_IF) ?? str(f.blockIf),
+    hint: str(f.hint),
   }
 }
 

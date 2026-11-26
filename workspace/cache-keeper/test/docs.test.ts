@@ -28,7 +28,11 @@ test('every setting /ctx:status reports is documented, and every documented key 
 
 test('every documented env variable really drives the key it is documented for', () => {
   // a value each parser accepts and that differs from every default
-  const sample = (key: string): string => (['enabled', 'forkPings', 'handoff.enabled', 'handoff.closeAfterSpawn'].includes(key) ? '0' : key === 'hitRatio' ? '0.5' : key.endsWith('Command') || key === 'skipIf' ? 'true' : '7')
+  const sample = (key: string): string =>
+    ['enabled', 'forkPings', 'handoff.enabled', 'handoff.closeAfterSpawn'].includes(key) ? '0'
+      : key === 'coldStop.enabled' ? '1'
+        : key === 'hitRatio' ? '0.5'
+          : key.endsWith('Command') || key === 'skipIf' || key === 'coldStop.blockIf' ? 'true' : '7'
   for (const s of SETTINGS) {
     if (s.key === undefined || s.env === undefined) continue
     const name = s.env.replace(/=.*$/, '')

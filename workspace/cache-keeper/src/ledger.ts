@@ -25,6 +25,8 @@ export const LEDGER_EVENTS = Object.freeze({
   renew: 'a compaction after an hour held by forks alone was put off behind one wake turn',
   'manual-ping': '`/ctx:ping`; not scored, its cost is in the ping cost',
   error: 'a hook threw (errors.ts); `detail` is `<hook>: <message>`',
+  'cold-stop': 'a prompt into a cold session was held (see [Cold stop](cold-stop.md)); `detail: "block-if"` when `coldStop.blockIf` held it',
+  'cold-go-on': 'the prompt sent again after a cold stop went through: the cold turn was chosen',
 } as const)
 
 export type LedgerEvent = keyof typeof LEDGER_EVENTS

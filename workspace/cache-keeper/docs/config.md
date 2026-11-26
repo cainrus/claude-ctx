@@ -29,6 +29,7 @@ The table is generated from `SETTINGS` in `src/config.ts` (`node scripts/docs.ts
 | `forkPings` | `CTX_KEEPER_FORK` | `true` | ping with a fork instead of a wake turn where the plugin's mod loads (see [Fork pings](fork-pings.md)) |
 | `cacheTtlSec` | — | `3600` | the cache TTL `/ctx:status`, `/ctx:ping`, the report and the ping timing assume; the status line uses the bucket the last turn really wrote and falls back to this; change it only if yours is not one hour |
 | `handoff.*` | | | see [Handoff](handoff.md) |
+| `coldStop.*` | | | see [Cold stop](cold-stop.md) |
 <!-- /gen:settings -->
 
 The defaults assume the 1-hour TTL of a subscription. On an API key the TTL is 5 minutes unless configured

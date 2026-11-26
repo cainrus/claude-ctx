@@ -3,7 +3,8 @@
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { end, gate, record, touch, wake, type Ctx, type HookInput } from '../src/commands.ts'
+import { runBlockIf } from '../src/cold-stop.ts'
+import { end, gate, person, record, touch, wake, type Ctx, type HookInput } from '../src/commands.ts'
 import { loadConfig, resolveHome } from '../src/config.ts'
 import { recordError } from '../src/errors.ts'
 import { arm, compactCheck, compacted, compactedStart, forked, forkRetry, forkWake, pingNow, waitEnd, waitStart } from '../src/fork.ts'
@@ -14,8 +15,9 @@ import { isBackgroundSession, readIdleSeconds } from '../src/presence.ts'
 import { formatReport, summarize } from '../src/report.ts'
 import { loadTuning } from '../src/tune.ts'
 import { runSkipIf } from '../src/veto.ts'
+import { sessionStatus } from '../src/warmth.ts'
 
-const VERSION = '0.9.0'
+const VERSION = '0.10.0'
 
 const USAGE = `cache-keeper ${VERSION} — keep an idle Claude Code session's prompt cache warm
 
@@ -28,6 +30,10 @@ Hook subcommands (read the hook input JSON on stdin):
   end               SessionEnd: forget the session
   gate              called by the plugin's mod (hooks/gate.ts) before a "!" command, a slash
                     command or a compaction reaches the model; same menu as touch
+  person            called by the plugin's mod (hooks/gate.ts) for every prompt: writes
+                    persons/<id>.json (promptAt; personAt, personCommand when the engine
+                    stamped it as the person's own: composer, bridge; personEnteredAt once
+                    such a prompt entered the session)
   arm, fork-wake,   called by the plugin's mod (hooks/keepalive.ts), which sends pings as
   forked,           $.model.fork; each answers one JSON line (see src/fork.ts)
   fork-retry,
@@ -38,6 +44,10 @@ Hook subcommands (read the hook input JSON on stdin):
                     no pings until the next turn, without the mod too
 
 Other:
+  status --json <session-id> [--transcript <path>]
+                    is that session's cache warm and until when, and when a person last
+                    prompted there, as one JSON line (src/warmth.ts SessionStatus);
+                    --transcript adds the turns keeper's record may not have seen
   report [--json]   summarise the decision ledger
   install-snippet   print a settings.json "hooks" block for use without the plugin
   wait-cmd          print the shell command of the waiting Stop hook
@@ -70,6 +80,7 @@ const HOOKS: Record<string, (input: HookInput, ctx: Ctx) => number> = {
   touch,
   end,
   gate,
+  person,
   arm: (input, ctx) => arm(input, ctx),
   'fork-wake': forkWake,
   forked,
@@ -111,6 +122,7 @@ function main(argv: string[]): number {
         handoffIO: realIO(config),
         background: (transcriptPath) => isBackgroundSession(process.env, transcriptPath),
         ...(skipIf ? { skipIf: (facts) => runSkipIf(skipIf, facts) } : {}),
+        ...(config.coldStop.blockIf ? { blockIf: (facts) => runBlockIf(config.coldStop.blockIf!, facts) } : {}),
       }
       input = parseInput(readStdin())
       return hook(input, ctx)
@@ -125,6 +137,18 @@ function main(argv: string[]): number {
 
   const script = shellQuote(fileURLToPath(new URL('./cache-keeper.sh', import.meta.url)))
   switch (cmd) {
+    case 'status': {
+      const ti = rest.indexOf('--transcript')
+      const transcript = ti >= 0 ? rest[ti + 1] : undefined
+      const sid = rest.filter((a, i) => !a.startsWith('--') && (ti < 0 || i !== ti + 1))[0]
+      if (!rest.includes('--json') || !sid || (ti >= 0 && !transcript)) {
+        process.stderr.write(`cache-keeper status: usage: status --json <session-id> [--transcript <path>]\n`)
+        return 64
+      }
+      const config = loadConfig()
+      process.stdout.write(`${JSON.stringify(sessionStatus(config.home, sid, Date.now(), transcript, config.cacheTtlSec))}\n`)
+      return 0
+    }
     case 'report': {
       const config = loadConfig()
       const summary = summarize(readLedger(config.home), config)

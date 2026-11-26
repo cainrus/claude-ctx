@@ -1,6 +1,6 @@
 {
   "name": "ctx",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Claude Code session context, from one plugin: keeps an idle session's prompt cache warm while someone is plausibly coming back (cache-keeper) and draws the status line from the engine's own figures (statusline). Pure hooks and one mod: no proxy, no MCP server, no dependencies.",
   "author": {
     "name": "Sergei Tarassov",

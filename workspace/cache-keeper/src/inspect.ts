@@ -75,6 +75,13 @@ export function settingsOf(config: Config, env: NodeJS.ProcessEnv, cap = effecti
   add('handoff.minCtxTokens', config.handoff.minCtxTokens, sourceOf(num, env.CTX_KEEPER_HANDOFF_MIN_CTX_TOKENS, handoff.minCtxTokens))
   add('handoff.spawnCommand', config.handoff.spawnCommand, sourceOf(str, env.CTX_KEEPER_HANDOFF_SPAWN, handoff.spawnCommand))
   add('handoff.closeAfterSpawn', config.handoff.closeAfterSpawn, sourceOf(bool, env.CTX_KEEPER_HANDOFF_CLOSE, handoff.closeAfterSpawn))
+  const cold = isRecord(file.coldStop) ? file.coldStop : {}
+  add('coldStop.enabled', config.coldStop.enabled, sourceOf(bool, env.CTX_KEEPER_COLD_STOP, cold.enabled))
+  add('coldStop.minUsd', config.coldStop.minUsd, sourceOf(num, env.CTX_KEEPER_COLD_STOP_MIN_USD, cold.minUsd))
+  add('coldStop.ackSec', config.coldStop.ackSec, (num(cold.ackSec) ?? 0) >= 1 ? 'config.json' : 'default')
+  add('coldStop.passCommands', config.coldStop.passCommands.join(', '), Array.isArray(cold.passCommands) ? 'config.json' : 'default')
+  add('coldStop.blockIf', config.coldStop.blockIf, sourceOf(str, env.CTX_KEEPER_BLOCK_IF, cold.blockIf))
+  add('coldStop.hint', config.coldStop.hint, sourceOf(str, undefined, cold.hint))
   return rows
 }
 

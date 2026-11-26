@@ -9,6 +9,8 @@
 
 import { execFileSync } from 'node:child_process'
 import { closeSync, fstatSync, openSync, readSync } from 'node:fs'
+import { join } from 'node:path'
+import { readJson } from './state.ts'
 
 /** `"HIDIdleTime" = 123456789000` (ns) -> whole seconds. */
 export function parseIdleSeconds(ioregOutput: string): number | null {
@@ -137,6 +139,21 @@ export function linuxIdleSeconds(exec: Exec, now: number, uid: number): number |
   }
   return null
 }
+
+/** The prompt a background job was started with (`claude --bg`, a dispatcher): its launch, not a person at its input box. */
+export function isJobLaunchPrompt(text: string | undefined, env: NodeJS.ProcessEnv = process.env, textLength?: number, maybeCut = false): boolean {
+  // WORKAROUND: Claude Code 2.1.332 stamps a background job's launch prompt as typed (origin `composer`), so it read as
+  // the person's own; the job keeps that prompt as `intent` in $CLAUDE_JOB_DIR/state.json, and only a prompt equal to it is told apart.
+  const dir = env.CLAUDE_JOB_DIR
+  if (!dir || typeof text !== 'string' || text === '') return false
+  const intent = readJson<{ intent?: unknown }>(join(dir, 'state.json'))?.intent
+  // a caller may send only the head of a long prompt, with its full length, or a head of unknown length (`maybeCut`)
+  if (typeof intent !== 'string' || !intent.startsWith(text)) return false
+  return intent.length === (textLength ?? text.length) || (maybeCut && text.length >= GATE_TEXT_CHARS)
+}
+
+/** The mod's gate sends at most this much of a turn's text (hooks/gate.ts HELD_CHARS). */
+export const GATE_TEXT_CHARS = 4000
 
 const KIND_TAIL_BYTES = 16_384
 

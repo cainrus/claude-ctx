@@ -7,7 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WAKE_MESSAGE } from '../src/commands.ts'
@@ -180,14 +180,24 @@ test('e2e: the delay reaches sleep from the environment', () => {
   assert.ok(w.ms >= 1000, `took ${w.ms} ms`)
 })
 
+/** An hour passes: every mark the cold verdict reads (session record, ledger, transcript) moves `ms` into the past. */
+function age(home: string, transcript: string, ms: number): void {
+  const shift = (iso: unknown) => (typeof iso === 'string' ? new Date(Date.parse(iso) - ms).toISOString() : iso)
+  const record = JSON.parse(readFileSync(sessionPath(home, SID), 'utf8'))
+  for (const k of ['lastTurnEndAt', 'cacheAnchorAt', 'lastRequestAt', 'lastPingAt', 'lastHumanAt']) if (typeof record[k] === 'number') record[k] -= ms
+  writeFileSync(sessionPath(home, SID), JSON.stringify(record))
+  const ledger = join(home, 'ledger.jsonl')
+  writeFileSync(ledger, readFileSync(ledger, 'utf8').split('\n').filter(Boolean).map((l) => JSON.stringify({ ...JSON.parse(l), t: shift(JSON.parse(l).t) })).join('\n') + '\n')
+  writeFileSync(transcript, readFileSync(transcript, 'utf8').split('\n').filter(Boolean).map((l) => JSON.stringify({ ...JSON.parse(l), timestamp: shift(JSON.parse(l).timestamp) })).join('\n') + '\n')
+}
+
 test('e2e: handoff — brief on the last wake, then a cold prompt is held and `2` spawns from the brief', () => {
   const home = tempHome()
   const env = { CTX_KEEPER_HOME: home, CTX_KEEPER_IDLE_SEC: String(T.awaySec + 1), CTX_KEEPER_DELAY_SEC: '0' }
-  // cacheTtlSec 0: the cache counts as cold right after the brief turn.
   // closeAfterSpawn off: a real close would SIGTERM the claude this suite may run in.
   writeFileSync(
     join(home, 'config.json'),
-    JSON.stringify({ cacheTtlSec: 0, handoff: { enabled: true, closeAfterSpawn: false, spawnCommand: 'echo "spawned from $CTX_KEEPER_BRIEF"' } }),
+    JSON.stringify({ handoff: { enabled: true, closeAfterSpawn: false, spawnCommand: 'echo "spawned from $CTX_KEEPER_BRIEF"' } }),
   )
   const transcript = writeTranscript(home, [{ at: Date.now() - (T.minAgeSec + 60) * 1000, read: 150_000, write: 500 }])
   const stop = { session_id: SID, transcript_path: transcript, hook_event_name: 'Stop', stop_hook_active: false }
@@ -198,6 +208,7 @@ test('e2e: handoff — brief on the last wake, then a cold prompt is held and `2
   writeFileSync(brief, `Goal: e2e.\n${'State of the work. '.repeat(30)}`)
   writeFileSync(transcript, `${readFileSync(transcript, 'utf8')}${assistantLine({ at: Date.now(), read: 150_500, write: 300 })}\n`)
   run(command('Stop', 0), { ...stop, stop_hook_active: true }, env)
+  age(home, transcript, 61 * 60_000)
 
   const prompt = { session_id: SID, transcript_path: transcript, hook_event_name: 'UserPromptSubmit' }
   const held = run(command('UserPromptSubmit'), { ...prompt, prompt: 'where were we?' }, env)
@@ -212,6 +223,27 @@ test('e2e: handoff — brief on the last wake, then a cold prompt is held and `2
   assert.ok(readLedger(home).some((e) => e.event === 'handoff-new'))
 })
 
+
+test('cli: status --json answers warmth and presence for one session; a bad call is exit 64', () => {
+  const home = tempHome()
+  const env = { CTX_KEEPER_HOME: home }
+  const now = Date.now()
+  const transcript = writeTranscript(home, [{ at: now - 10 * 60_000, read: 90_000, write: 500 }])
+  run(command('Stop', 0), { session_id: SID, transcript_path: transcript, hook_event_name: 'Stop', stop_hook_active: false }, env)
+  mkdirSync(join(home, 'persons'), { recursive: true })
+  writeFileSync(join(home, 'persons', `${SID}.json`), JSON.stringify({ promptAt: now - 11 * 60_000, personAt: now - 11 * 60_000 }))
+  const cli = (args: string) => run(`node ${JSON.stringify(join(ROOT, 'bin/cache-keeper.ts'))} ${args}`, '', env)
+  const r = cli(`status --json ${SID} --transcript ${JSON.stringify(transcript)}`)
+  assert.equal(r.status, 0, r.stderr)
+  const s = JSON.parse(r.stdout)
+  assert.equal(s.sessionId, SID)
+  assert.equal(s.warm, true)
+  assert.ok(s.coldAt > now && s.lastWarmAt <= now, r.stdout)
+  assert.deepEqual(s.presence, { promptAt: now - 11 * 60_000, personAt: now - 11 * 60_000 })
+  const { now: _, ...unknown } = JSON.parse(cli('status --json no-such').stdout)
+  assert.deepEqual(unknown, { sessionId: 'no-such', warm: false, cold: false }, 'nothing known: neither warm nor cold, no presence')
+  for (const bad of ['status', `status ${SID}`, `status --json ${SID} --transcript`]) assert.equal(cli(bad).status, 64, bad)
+})
 
 test('e2e: garbage on stdin never fails a hook', () => {
   const { env } = fresh()

@@ -17,6 +17,7 @@ import { postNotice } from './notices.ts'
 import { rateFor } from './prices.ts'
 import { readJson, writeJsonAtomic, type SessionState } from './state.ts'
 import { WAKE_REPLY } from './wake-text.ts'
+import { readWarmth } from './warmth.ts'
 
 /** Refusals after which the keeper would let a still-warm cache die. */
 export const HANDOFF_REASONS: readonly RefusalReason[] = ['away', 'away-budget-spent', 'budget-spent', 'holder']
@@ -192,7 +193,7 @@ export function isMachineMessage(prompt: string): boolean {
   return MACHINE_MESSAGE.test(prompt)
 }
 
-function idleText(ms: number): string {
+export function idleText(ms: number): string {
   const min = Math.floor(ms / 60_000)
   return min < 60 ? `${min}m` : `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`
 }
@@ -329,7 +330,8 @@ export function interceptPrompt(
   const rec = loadRecord(home, state.sessionId)
   if (!rec || rec.status !== 'ready') return undefined
   const t = new Date(now).toISOString()
-  const cold = state.lastTurnEndAt !== undefined && now - state.lastTurnEndAt >= config.cacheTtlSec * 1000
+  // INVARIANT: cold is readWarmth's verdict, the one every stop and `status --json` read: a second rule here once burned the brief as warm while another stop called the session cold.
+  const cold = readWarmth(home, state.sessionId, now, state.transcriptPath, config.cacheTtlSec).cold
 
   if (!cold) {
     saveRecord(home, { ...rec, status: 'used', choice: 'warm', usedAt: now })

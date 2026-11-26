@@ -74,6 +74,7 @@ beforeEach(() => resetForTest())
 
 test('every event once: each package its own, the shared two from the root', () => {
   assert.deepEqual([...hooks().keys()].sort(), [
+    'prompt.submit',
     'session.compact',
     'session.measure',
     'session.start',

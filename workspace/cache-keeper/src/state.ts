@@ -1,4 +1,4 @@
-/** On-disk state under `$CTX_KEEPER_HOME`: `sessions/`, `forks/`, `away-budget.json`. */
+/** On-disk state under `$CTX_KEEPER_HOME`: `sessions/`, `forks/`, `persons/`, `away-budget.json`. */
 
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -63,6 +63,10 @@ export interface SessionState {
   forkPingsHeld?: number
   /** Epoch ms of the last compaction, reported by the mod. */
   compactedAt?: number
+  /** Epoch ms the cold stop last held a prompt; a prompt within `coldStop.ackSec` of it goes through. */
+  coldStopAt?: number
+  /** The prompt the UserPromptSubmit hook last let through (when, its first characters); spent by the gate's ask at its first request. */
+  promptHookPassed?: { at: number; head: string }
 }
 
 export interface AwayBudget {
@@ -93,6 +97,25 @@ export function safeId(sessionId: string): string {
 
 export function sessionPath(home: string, sessionId: string): string {
   return join(home, 'sessions', `${safeId(sessionId)}.json`)
+}
+
+/** `persons/<id>.json`: written whole by `person`, whose only writer is the mod (awaited per prompt). */
+export interface PersonFacts {
+  /** Epoch ms of the last prompt of any origin. */
+  promptAt: number
+  /** Epoch ms of the last prompt the engine stamped as the person's own (origin `composer` or `bridge`). */
+  personAt?: number
+  /** That prompt's slash command name, without the slash; absent when it had none. */
+  personCommand?: string
+  /** Epoch ms of the last person prompt that entered the session: no hook dropped it and keeper's gate did not answer it. */
+  personEnteredAt?: number
+  personEnteredCommand?: string
+  /** The entry personEnteredAt replaced, put back when keeper's gate refuses that prompt after it entered. */
+  personEnteredBefore?: { at: number; command?: string }
+}
+
+export function personPath(home: string, sessionId: string): string {
+  return join(home, 'persons', `${safeId(sessionId)}.json`)
 }
 
 export function newSession(sessionId: string): SessionState {
