@@ -475,6 +475,14 @@ test('record: a start from before this turn began is not trusted', () => {
   assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0)
 })
 
+test('record: the prompt entry stamped just before the prompt hook ran still anchors the turn', () => {
+  const home = tempHome()
+  saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 24_100 })
+  const transcript = writeLines(home, [userLine(T0 - 25_000, 'do it'), assistantLine({ at: T0, ...BIG })])
+  record({ session_id: SID, transcript_path: transcript }, makeCtx(configFor(home), T0 + 500))
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0 - 25_000)
+})
+
 test('record: a transcript that never catches up leaves the anchor at now, not at an earlier turn\'s start', () => {
   const home = tempHome()
   saveSession(home, { ...newSession(SID), lastHumanAt: T0 - 5_000 })

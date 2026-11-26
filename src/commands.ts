@@ -38,6 +38,7 @@ export interface HookInput {
 }
 
 const GATE_STOP_WINDOW_MS = 30_000
+const PROMPT_STAMP_SLACK_MS = 5_000
 
 export interface Ctx {
   config: Config
@@ -152,8 +153,12 @@ export function record(input: HookInput, ctx: Ctx): number {
   // WARNING: lastRequestAt stays Claude Code's own clock (compactedSinceRequest, compactCheck's #105017 test read it): never the request start.
   state.lastRequestAt = state.lastTurnEndAt
   // The server's clock runs from the request's start. Trusted only inside this turn and not after its answer; else the answer time.
+  // WARNING: the prompt's transcript entry is stamped before UserPromptSubmit runs (median 0.9 s, p25 1.4 s earlier on 243
+  // sessions, 26.11.2026), so "inside this turn" starts PROMPT_STAMP_SLACK_MS before turnBegan; without it a turn with no
+  // tool call never anchors at its start.
   const started = turn.requestStart
-  state.cacheAnchorAt = started !== undefined && started >= turnBegan && started <= state.lastTurnEndAt ? started : state.lastTurnEndAt
+  const inTurn = started !== undefined && started >= turnBegan - PROMPT_STAMP_SLACK_MS && started <= state.lastTurnEndAt
+  state.cacheAnchorAt = inTurn ? started : state.lastTurnEndAt
   state.forkPingsHeld = 0
 
   if (usage) {
