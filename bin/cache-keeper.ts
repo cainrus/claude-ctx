@@ -15,7 +15,7 @@ import { formatReport, summarize } from '../src/report.ts'
 import { loadTuning } from '../src/tune.ts'
 import { runSkipIf } from '../src/veto.ts'
 
-const VERSION = '0.6.7'
+const VERSION = '0.7.0'
 
 const USAGE = `cache-keeper ${VERSION} — keep an idle Claude Code session's prompt cache warm
 
