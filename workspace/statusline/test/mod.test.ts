@@ -104,28 +104,30 @@ test('an engine call that fails under a measurement is swallowed, not left unhan
   await settle()
 })
 
-test('a look at the folder hung on the engine holds the next ones back for 30 s, not for good', async () => {
+test('a look at the folder that a newer one overtook writes nothing when it answers late', async () => {
   const { $ } = engine()
   let clock = NOW
+  let release: (rows: unknown[]) => void = () => {}
+  const cwds = ['/Users/u/p/old', '/Users/u/p/new']
   let calls = 0
-  const e = $ as { clock: { now: () => Promise<number> }; session: { messages: () => Promise<unknown[]> } }
+  const e = $ as { clock: { now: () => Promise<number> }; session: { cwd: () => Promise<string>; messages: () => Promise<unknown[]> } }
   e.clock.now = async () => clock
+  e.session.cwd = async () => cwds[Math.min(calls, 1)]!
   e.session.messages = () => {
     calls++
-    return calls === 1 ? new Promise(() => {}) : Promise.resolve([])
+    return calls === 1 ? new Promise((r) => (release = r)) : Promise.resolve([])
   }
   renderStatusLine($, site(), echo)
   await settle()
-  assert.equal(calls, 1, 'the first look hangs')
-  const u = { model: 'claude-opus-5-5', input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+  assert.equal(calls, 1, 'the first look waits on the engine')
   clock += 10_000
-  statuslineStepAnswered($, {}, u)
+  statuslineStepAnswered($, {}, null)
   await settle()
-  assert.equal(calls, 1, 'held back while it may still answer')
-  clock += 30_000
-  statuslineStepAnswered($, {}, u)
+  assert.equal(calls, 2, 'the next look does not wait for it')
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / new($| · )/)
+  release([])
   await settle()
-  assert.equal(calls, 2, 'past 30 s the next look goes ahead')
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / new($| · )/, 'the late answer of the older look is dropped')
 })
 
 test('the session record, the account table and the session URL reach the line', async () => {

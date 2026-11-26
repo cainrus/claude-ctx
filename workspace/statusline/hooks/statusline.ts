@@ -226,37 +226,25 @@ async function refreshMeta($: $, s: Settings): Promise<void> {
   }
 }
 
-/** Since when a look at the worked-on folder runs; undefined when none does. */
-let workdirSince: number | undefined
-/** A look running longer than this is hung on an engine call: the next one goes ahead. */
-const WORKDIR_HUNG_MS = 30_000
-
-function workdirBusy(now: number): boolean {
-  return workdirSince !== undefined && now - workdirSince < WORKDIR_HUNG_MS
-}
+/** Counts the looks at the worked-on folder; only the newest one writes. */
+let workdirGen = 0
 
 async function refreshWorkdir($: $, s: Settings): Promise<void> {
-  // One look at a time: a slow one and the tick's retry would both write the folder and the git facts.
-  const now = await $.clock.now()
-  if (workdirBusy(now)) return
-  const mine = now
-  workdirSince = mine
+  const gen = ++workdirGen
+  workdirAt = await $.clock.now()
+  const cwd = await $.session.cwd()
+  let inputs: unknown[] = []
   try {
-    workdirAt = await $.clock.now()
-    const cwd = await $.session.cwd()
-    let inputs: unknown[] = []
-    try {
-      const rows = await $.session.messages({ last: WORKDIR_MESSAGES })
-      if (Array.isArray(rows)) inputs = rows.filter((m) => m.role === 'assistant').flatMap((m) => m.toolUses.map((t) => t.input))
-    } catch {
-      // No rows to read: the session's own folder.
-    }
-    const dir = await workdirOf(fsOf($), cwd, candidatesOf(inputs, s.home, s.ignore))
-    facts.dir = dir.split('/').pop() || dir
-    await refreshGit($, s, dir)
-  } finally {
-    if (workdirSince === mine) workdirSince = undefined
+    const rows = await $.session.messages({ last: WORKDIR_MESSAGES })
+    if (Array.isArray(rows)) inputs = rows.filter((m) => m.role === 'assistant').flatMap((m) => m.toolUses.map((t) => t.input))
+  } catch {
+    // No rows to read: the session's own folder.
   }
+  const dir = await workdirOf(fsOf($), cwd, candidatesOf(inputs, s.home, s.ignore))
+  // A look a newer one started after (a slow or hung one) answers from older inputs: it writes nothing.
+  if (gen !== workdirGen) return
+  facts.dir = dir.split('/').pop() || dir
+  await refreshGit($, s, dir)
 }
 
 let gitDirOf: { dir: string; gitDir?: string; top?: string } | undefined
@@ -308,9 +296,7 @@ async function tick($: $): Promise<void> {
     const s = await settingsOf($)
     // A first refresh that failed is made up here, not on every draw.
     if (facts.sessionId === undefined) await refreshSession($, s)
-    // A running look at the folder refreshes git itself; the tick does not race it.
-    const git = workdirBusy(await $.clock.now()) ? Promise.resolve() : facts.dir === undefined ? refreshWorkdir($, s) : refreshGit($, s)
-    await Promise.all([refreshMeta($, s), git])
+    await Promise.all([refreshMeta($, s), facts.dir === undefined ? refreshWorkdir($, s) : refreshGit($, s)])
     redraw($)
   } catch {
     // INVARIANT: a refresh that fails keeps the last line: a status line must never break a session.
@@ -463,7 +449,7 @@ export function resetForTest(): void {
   text = undefined
   turn = { inUsd: 0, outUsd: 0 }
   workdirAt = 0
-  workdirSince = undefined
+  workdirGen = 0
   gitDirOf = undefined
   for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k]
 }
