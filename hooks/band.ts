@@ -52,9 +52,10 @@ export type Part = { text: string; dim?: boolean; color?: 'warning' | 'success' 
 /** The row, pure so the tests can drive it. `working`: a turn runs, so no ping button. */
 export function partsOf(v: BandView, working: boolean): Part[] {
   const help: Part = { key: 'help', label: '?' }
-  if (v.line.kind === 'expired') return [{ text: format(v.line, v.offsetMin), color: 'success' }, help]
-  if (v.line.kind !== 'cached') return [{ text: format(v.line, v.offsetMin) }, help]
-  const parts: Part[] = [{ text: timeText(v.line, v.offsetMin), ...(v.line.warn ? { color: 'warning' as const } : {}) }]
+  if (v.line.kind !== 'cached') return [{ text: format(v.line, v.offsetMin), ...(v.line.kind === 'expired' ? { color: 'success' as const } : {}) }, help]
+  const time: { text: string; color?: 'warning' } = { text: timeText(v.line, v.offsetMin) }
+  if (v.line.warn) time.color = 'warning'
+  const parts: Part[] = [time]
   if (v.line.extends) parts.push(working ? { text: `↻${v.line.left}`, dim: true } : { key: 'ping', label: `↻${v.line.left}` })
   else parts.push({ text: 'final', dim: true })
   const cost = costText(v.line)

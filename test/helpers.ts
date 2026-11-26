@@ -91,10 +91,20 @@ export function writeLines(dir: string, lines: string[], name = 'transcript.json
 
 /** Write a transcript whose last main-thread turn has the given usage. */
 export function writeTranscript(dir: string, turns: UsageSpec[], name = 'transcript.jsonl'): string {
-  const path = join(dir, name)
-  writeFileSync(path, `${turns.map((t) => assistantLine(t)).join('\n')}\n`)
-  return path
+  return writeLines(dir, turns.map((t) => assistantLine(t)), name)
 }
+
+/** One row per case: the bucket a usage object wrote (src/transcript.ts `ttlOfUsage` and the mod's copy in hooks/status.ts). */
+export const TTL_OF_USAGE_CASES: Array<{ name: string; usage: unknown; ttlSec: 300 | 3600 | undefined }> = [
+  { name: 'only 1-hour tokens', usage: { cache_creation: { ephemeral_1h_input_tokens: 5, ephemeral_5m_input_tokens: 0 } }, ttlSec: 3600 },
+  { name: 'only 5-minute tokens', usage: { cache_creation: { ephemeral_5m_input_tokens: 5 } }, ttlSec: 300 },
+  { name: 'both: 1 hour wins', usage: { cache_creation: { ephemeral_1h_input_tokens: 1, ephemeral_5m_input_tokens: 9 } }, ttlSec: 3600 },
+  { name: 'an empty split', usage: { cache_creation: {} }, ttlSec: undefined },
+  { name: 'a zero split', usage: { cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 0 } }, ttlSec: undefined },
+  { name: 'no split', usage: { input_tokens: 4 }, ttlSec: undefined },
+  { name: 'an empty usage', usage: {}, ttlSec: undefined },
+  { name: 'a non-number count', usage: { cache_creation: { ephemeral_1h_input_tokens: '5' } }, ttlSec: undefined },
+]
 
 const AT = Date.UTC(2026, 0, 1, 10, 0, 0)
 

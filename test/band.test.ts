@@ -56,11 +56,11 @@ test('a muted session shows done, not a button; cold and fresh lines have only t
 test('the time goes yellow in the warning window, and nowhere else', () => {
   assert.deepEqual(partsOf(view({}, { warn: true }), false)[0], { text: '◉ 08:00', color: 'warning' })
   assert.deepEqual(partsOf(view({}, {}), false)[0], { text: '◉ 08:00' })
-  assert.equal(partsOf(view({ line: { kind: 'ready' } }), false)[0]!.hasOwnProperty('color'), false)
+  assert.equal('color' in partsOf(view({ line: { kind: 'ready' } }), false)[0]!, false)
 })
 
 test('the cold row is green and carries the first-turn price of a new session', () => {
-  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98, freshUsd: 0.3 } }), false)[0], { text: '○ cold · next $0.98 ⇄$0.30', color: 'success' })
+  assert.deepEqual(partsOf(view({ line: { kind: 'expired', nextColdUsd: 0.98, coldStartUsd: 0.3 } }), false)[0], { text: '○ cold · next $0.98 ⇄$0.30', color: 'success' })
 })
 
 test('the legend says what the colours and the new-session price mean', () => {

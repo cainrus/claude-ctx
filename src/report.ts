@@ -67,11 +67,6 @@ export function turnPrices(ctxTokens: number, model: string | undefined, prices:
   return { warmTurnUsd: requestUsd({ cacheRead: ctxTokens }, r), coldTurnUsd: requestUsd({ cacheWrite: ctxTokens }, r) }
 }
 
-/** The first turn of a new session: its prompt written into a 1-hour cache, on `model`. */
-export function coldStartUsd(promptTokens: number, model: string | undefined, prices: PriceTable): number {
-  return requestUsd({ cacheWrite: promptTokens }, rateFor(model, prices, promptTokens))
-}
-
 /** Estimate for a resumed-while-warm stretch: a full 1h rewrite of the context, minus the read it would pay instead. */
 export function savedUsd(e: LedgerEntry, prices: PriceTable): number {
   const r = rateFor(e.model, prices, tok(e.ctxTokens))

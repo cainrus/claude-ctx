@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { firstMainUsage, firstMainUsageSince, lastMainUsage, lastRequestStart, requestStartFromLine, usageFromLine } from '../src/transcript.ts'
+import { firstMainUsage, firstMainUsageSince, lastMainTurn, lastMainUsage, requestStartFromLine, usageFromLine } from '../src/transcript.ts'
 import { assistantLine, FIXTURES, REQUEST_START_AT, REQUEST_START_CASES, tempHome, userLine, writeLines } from './helpers.ts'
 
 test('last main-thread usage skips sidechain, synthetic and non-assistant lines', () => {
@@ -130,7 +130,7 @@ test('requestStartFromLine: which lines start a request (the rule of cache-ancho
   for (const c of REQUEST_START_CASES) assert.equal(requestStartFromLine(c.line), c.starts ? REQUEST_START_AT : undefined, c.name)
 })
 
-test('lastRequestStart: the last request of the main thread, past local lines, interrupts, sidechains and the answer', () => {
+test('lastMainTurn: the last request of the main thread, past local lines, interrupts, sidechains and the answer', () => {
   const dir = tempHome()
   const big = userLine(0, 'ü'.repeat(200_000))
   const p = writeLines(dir, [
@@ -143,10 +143,11 @@ test('lastRequestStart: the last request of the main thread, past local lines, i
     userLine(31_000, '<local-command-stdout>x</local-command-stdout>'),
     userLine(32_000, '[Request interrupted by user]'),
   ])
-  assert.equal(lastRequestStart(p, 1024), 10_000)
-  assert.equal(lastRequestStart(p), 10_000)
-  assert.equal(lastRequestStart('/nonexistent/t.jsonl'), undefined)
-  assert.equal(lastRequestStart(writeLines(dir, [assistantLine({ at: 1, read: 1 })], 'none.jsonl')), undefined)
+  assert.equal(lastMainTurn(p, 1024).requestStart, 10_000)
+  assert.equal(lastMainTurn(p).requestStart, 10_000)
+  assert.equal(lastMainTurn(p, 1024).usage?.cacheRead, 2)
+  assert.deepEqual(lastMainTurn('/nonexistent/t.jsonl'), {})
+  assert.equal(lastMainTurn(writeLines(dir, [assistantLine({ at: 1, read: 1 })], 'none.jsonl')).requestStart, undefined)
 })
 
 test('firstMainUsage: the first main-thread request from the front, whatever the chunk size', () => {

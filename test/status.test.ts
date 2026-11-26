@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { format, lineOf, nodeOk, refresh, requestStartOf, seedOf, ttlOfUsage } from '../hooks/status.ts'
+import { format, lineOf, nodeOk, refresh, requestStartOf, seedOf, statusRequested, statusStepAnswered, ttlOfUsage } from '../hooks/status.ts'
 import { decide, THRESHOLDS } from '../src/policy.ts'
-import { requestStartFromLine } from '../src/transcript.ts'
-import { assistantLine, REQUEST_START_AT, REQUEST_START_CASES, SID, userLine } from './helpers.ts'
+import { requestStartFromLine, ttlOfUsage as ttlOfUsageSrc } from '../src/transcript.ts'
+import { assistantLine, REQUEST_START_AT, REQUEST_START_CASES, SID, TTL_OF_USAGE_CASES, userLine } from './helpers.ts'
 
 const T = 1_800_000_000_000
 const MIN = 60_000
@@ -20,6 +20,7 @@ const cached = (left: number, ext: boolean, warmUntil: number, pingsUsd = 0) => 
   heldUntil: ext ? warmUntil + left * PING_EVERY : warmUntil,
   pingsUsd,
 })
+const hhmm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`
 const pick = (l: ReturnType<typeof lineOf>) => {
   assert.equal(l?.kind, 'cached')
   return l as ReturnType<typeof cached>
@@ -185,17 +186,12 @@ test('a request seen by the mod brings its own bucket until the record catches u
 })
 
 test('statusStepAnswered keeps the bucket a step wrote, and a read-only step leaves it', async () => {
-  const { statusRequested, statusStepAnswered } = await import('../hooks/status.ts')
   const at = Date.now()
   const $ = fakeMod({ now: at, sid: 'step-test', config: { band: false } })
   await statusRequested($ as never)
   statusStepAnswered({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
   await statusRequested($ as never)
   statusStepAnswered({ input_tokens: 1 })
-  const hhmm = (ms: number) => {
-    const d = new Date(ms)
-    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  }
   assert.equal($.shown.at(-1), `◉ ${hhmm(at + 5 * MIN)}`)
 })
 
@@ -232,7 +228,7 @@ test('the warning window: the last 10 minutes of an hour, the last half of a 5-m
 
 test('the first-turn price of a new session is shown only after the cold price, and only when cheaper', () => {
   const cold = (extra: Record<string, unknown>) => lineOf(session({ coldTurnUsd: 0.98, ...extra }), {}, {}, T + H)!
-  assert.deepEqual(cold({ coldStartUsd: 0.3 }), { kind: 'expired', nextColdUsd: 0.98, freshUsd: 0.3 })
+  assert.deepEqual(cold({ coldStartUsd: 0.3 }), { kind: 'expired', nextColdUsd: 0.98, coldStartUsd: 0.3 })
   assert.equal(format(cold({ coldStartUsd: 0.3 }), 0), '○ cold · next $0.98 ⇄$0.30')
   assert.deepEqual(cold({ coldStartUsd: 0.98 }), { kind: 'expired', nextColdUsd: 0.98 }, 'equal: advises nothing')
   assert.deepEqual(cold({ coldStartUsd: 1.5 }), { kind: 'expired', nextColdUsd: 0.98 })
@@ -249,7 +245,14 @@ test('requestStartOf (the mod) and requestStartFromLine (src) read the same tabl
   }
 })
 
-test('ttlOfUsage reads the API split and a turn.step usage alike', () => {
+test('ttlOfUsage (the mod) and ttlOfUsage (src) read the same table', () => {
+  for (const c of TTL_OF_USAGE_CASES) {
+    assert.equal(ttlOfUsage(c.usage), c.ttlSec, c.name)
+    assert.equal(ttlOfUsageSrc(c.usage), c.ttlSec, c.name)
+  }
+})
+
+test('ttlOfUsage (the mod) also reads a turn.step usage', () => {
   assert.equal(ttlOfUsage({ cache_creation: { ephemeral_1h_input_tokens: 5, ephemeral_5m_input_tokens: 0 } }), 3600)
   assert.equal(ttlOfUsage({ cache_creation: { ephemeral_5m_input_tokens: 5 } }), 300)
   assert.equal(ttlOfUsage({ ephemeral_1h_input_tokens: 5 }), 3600)
@@ -313,7 +316,6 @@ function fakeMod(o: { now: number; files?: Record<string, string>; sid?: string;
 
 test('refresh: a resumed session whose cache is still warm shows the end, not ready; one long past shows cold', async () => {
   const now = Date.now()
-  const hhmm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`
   const warm = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': `${userLine(now - 20 * MIN, 'hi')}\n${assistantLine({ at: now - 19 * MIN, read: 5 })}\n` } })
   await refresh(warm as never)
   assert.equal(warm.shown.at(-1), `◉ ${hhmm(now - 20 * MIN + H)}`)
@@ -333,7 +335,6 @@ test('refresh: a ledger hit after the last request keeps a resumed session warm,
   }
   const $ = fakeMod({ now, config: { band: false }, files })
   await refresh($ as never)
-  const hhmm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`
   assert.equal($.shown.at(-1), `◉ ${hhmm(now - 10 * MIN + H)}`)
   const readsBefore = $.reads.length
   await refresh($ as never)

@@ -2,17 +2,14 @@
 
 <!-- gen:module hooks/status.ts -->
 The status line: one pinned line under the prompt saying whether keeper is on
-and until when this session's prompt cache stays warm, counted from the last
-model request (the start of the request, not of its answer; the bucket, 1 hour or
-5 minutes, is the one the last write really used). It refreshes on load, as each request goes out, a few seconds
-after each turn and every 30 s. A resumed session is read from its transcript and
-keeper's ledger, so a cache still warm shows as warm. Once the cache is cold the
-line says what the next turn costs and, when it is cheaper, a new session's first
-turn. It also says when `node` on PATH cannot run the hooks, which would
-otherwise fail without a word. Set `"statusLine": false` in config.json to turn
-it off, e.g. when your own statusLine command already shows keeper. Where the
-mod loads, band.ts draws the same line above the prompt with buttons, and this
-line carries errors only (`"band": false` keeps it here).
+and until when this session's prompt cache stays warm, counted from the start
+of the last model request, in the bucket it really wrote. It refreshes as each
+request goes out, after each turn and every 30 s; a resumed session is read from
+its transcript and keeper's ledger. Once cold, it says what the next turn costs
+and, when cheaper, a new session's first turn; it also says when `node` on PATH
+cannot run the hooks. Set `"statusLine": false` in config.json to turn it off.
+Where the mod loads, band.ts draws the line above the prompt and this one
+carries errors only (`"band": false` keeps it here).
 <!-- /gen:module -->
 
 Every form it takes, printed by the real `format()`:

@@ -4,7 +4,7 @@ import type { Config } from './config.ts'
 import { handoffMessage, interceptPrompt, requestHandoff, settleHandoff, wantsHandoff, type HandoffIO } from './handoff.ts'
 import { appendLedger, type RefusalReason } from './ledger.ts'
 import { takeNotices } from './notices.ts'
-import { addPingCost, coldStartUsd, turnPrices } from './report.ts'
+import { addPingCost, turnPrices } from './report.ts'
 import { statusReport } from './inspect.ts'
 import { decide, isAtKeyboard } from './policy.ts'
 import {
@@ -19,7 +19,7 @@ import {
   saveSession,
   type SessionState,
 } from './state.ts'
-import { firstMainUsage, firstMainUsageSince, lastMainUsage, lastRequestStart } from './transcript.ts'
+import { firstMainUsage, firstMainUsageSince, lastMainTurn, type MainTurn } from './transcript.ts'
 import { tunedMaxPings } from './tune.ts'
 import type { SessionFacts, Verdict } from './veto.ts'
 import { WAKE_REPLY } from './wake-text.ts'
@@ -66,14 +66,15 @@ const blockingSleep = (ms: number) => Atomics.wait(new Int32Array(new SharedArra
 export const TRANSCRIPT_CATCH_UP_MS = 3000
 const CATCH_UP_STEP_MS = 100
 
-function usageSince(path: string, sinceMs: number, ctx: Ctx) {
+function mainTurnSince(path: string, sinceMs: number, ctx: Ctx): MainTurn {
   const sleep = ctx.sleepMs ?? blockingSleep
   // WORKAROUND: the Stop hook can run before Claude Code flushed the turn's assistant entry (seen live), and a read then
   // returns the PREVIOUS turn's usage. Poll for an entry no older than the turn's start; undefined = record it unscored.
   for (let waited = 0; ; waited += CATCH_UP_STEP_MS) {
-    const usage = lastMainUsage(path)
-    if (usage && (usage.timestamp === undefined || usage.timestamp >= sinceMs)) return usage
-    if (waited >= TRANSCRIPT_CATCH_UP_MS) return undefined
+    const turn = lastMainTurn(path)
+    const usage = turn.usage
+    if (usage && (usage.timestamp === undefined || usage.timestamp >= sinceMs)) return turn
+    if (waited >= TRANSCRIPT_CATCH_UP_MS) return { requestStart: turn.requestStart }
     sleep(CATCH_UP_STEP_MS)
   }
 }
@@ -140,14 +141,14 @@ export function record(input: HookInput, ctx: Ctx): number {
   }
 
   const turnBegan = state.pendingPing && state.pingTransport !== 'fork' ? (state.lastPingAt ?? 0) : (state.lastHumanAt ?? 0)
-  const usage = state.transcriptPath ? usageSince(state.transcriptPath, turnBegan, ctx) : undefined
+  const turn: MainTurn = state.transcriptPath ? mainTurnSince(state.transcriptPath, turnBegan, ctx) : {}
+  const { usage, requestStart: startedAt } = turn
 
   // WARNING: the TTL restarted at the last assistant entry's timestamp, not this hook's clock. With delay == minAgeSec,
   // "now" could land after the sleeper this Stop started and make it look stale. An entry older than the last prompt = not caught up: now.
   const ts = usage?.timestamp
   state.lastTurnEndAt = ts !== undefined && ts >= (state.lastHumanAt ?? 0) ? Math.min(ts, ctx.now) : ctx.now
   // The cache lifetime counts from the request's start: the user entry that sent it, never later than the turn's end.
-  const startedAt = state.transcriptPath ? lastRequestStart(state.transcriptPath) : undefined
   state.lastRequestAt = startedAt !== undefined && startedAt <= state.lastTurnEndAt ? startedAt : state.lastTurnEndAt
   state.forkPingsHeld = 0
 
@@ -159,7 +160,7 @@ export function record(input: HookInput, ctx: Ctx): number {
   }
   if (state.coldStartUsd === undefined && state.transcriptPath) {
     const first = firstMainUsage(state.transcriptPath)
-    if (first) state.coldStartUsd = coldStartUsd(first.ctxTokens, state.model ?? first.model, ctx.config.prices)
+    if (first) state.coldStartUsd = turnPrices(first.ctxTokens, state.model ?? first.model, ctx.config.prices).coldTurnUsd
   }
 
   // INVARIANT: only a Stop after our own wake turn is scored, never on `stop_hook_active` alone (another Stop hook

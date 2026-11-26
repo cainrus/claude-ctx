@@ -1,16 +1,13 @@
 /**
  * The status line: one pinned line under the prompt saying whether keeper is on
- * and until when this session's prompt cache stays warm, counted from the last
- * model request (the start of the request, not of its answer; the bucket, 1 hour or
- * 5 minutes, is the one the last write really used). It refreshes on load, as each request goes out, a few seconds
- * after each turn and every 30 s. A resumed session is read from its transcript and
- * keeper's ledger, so a cache still warm shows as warm. Once the cache is cold the
- * line says what the next turn costs and, when it is cheaper, a new session's first
- * turn. It also says when `node` on PATH cannot run the hooks, which would
- * otherwise fail without a word. Set `"statusLine": false` in config.json to turn
- * it off, e.g. when your own statusLine command already shows keeper. Where the
- * mod loads, band.ts draws the same line above the prompt with buttons, and this
- * line carries errors only (`"band": false` keeps it here).
+ * and until when this session's prompt cache stays warm, counted from the start
+ * of the last model request, in the bucket it really wrote. It refreshes as each
+ * request goes out, after each turn and every 30 s; a resumed session is read from
+ * its transcript and keeper's ledger. Once cold, it says what the next turn costs
+ * and, when cheaper, a new session's first turn; it also says when `node` on PATH
+ * cannot run the hooks. Set `"statusLine": false` in config.json to turn it off.
+ * Where the mod loads, band.ts draws the line above the prompt and this one
+ * carries errors only (`"band": false` keeps it here).
  */
 
 import type { EngineInterface as $ } from 'claude-code'
@@ -62,7 +59,7 @@ export type Line =
       /** The next turn's prompt written into a new cache, USD; undefined in a record from before 0.6.7. */
       nextColdUsd?: number
       /** A new session's first turn, USD; present only when it is cheaper than `nextColdUsd`. */
-      freshUsd?: number
+      coldStartUsd?: number
     }
 
 type Json = Record<string, unknown>
@@ -93,14 +90,15 @@ export function lineOf(
   const recorded = Math.max(num(session?.lastRequestAt) ?? turnEnd, forkRenewed)
   const lastSent = Math.max(recorded, requestedAt ?? 0)
   if (lastSent === 0) return { kind: 'ready' }
-  const fromRequest = requestedAt !== undefined && requestedAt >= recorded ? requestedTtlSec : undefined
-  const ttlSec = fromRequest ?? num(session?.cacheTtlSec) ?? num(config.cacheTtlSec) ?? DEFAULT_TTL_SEC
+  const requestTtlSec = requestedAt !== undefined && requestedAt >= recorded ? requestedTtlSec : undefined
+  const ttlSec = requestTtlSec ?? num(session?.cacheTtlSec) ?? num(config.cacheTtlSec) ?? DEFAULT_TTL_SEC
   const warmUntil = lastSent + ttlSec * 1000
   const nextColdUsd = num(session?.coldTurnUsd)
   if (now >= warmUntil) {
     if (nextColdUsd === undefined) return { kind: 'expired' }
-    const freshUsd = num(session?.coldStartUsd)
-    return freshUsd !== undefined && freshUsd < nextColdUsd ? { kind: 'expired', nextColdUsd, freshUsd } : { kind: 'expired', nextColdUsd }
+    const coldStartUsd = num(session?.coldStartUsd)
+    if (coldStartUsd !== undefined && coldStartUsd < nextColdUsd) return { kind: 'expired', nextColdUsd, coldStartUsd }
+    return { kind: 'expired', nextColdUsd }
   }
   // INVARIANT: mirrors keeper's rules (src/config.ts resolution order, policy.ts muting on a miss or done); the mod cannot import them.
   const max = envNum(env.maxPings) ?? num(config.maxPings) ?? num(tuning?.maxPings) ?? DEFAULT_MAX_PINGS
@@ -139,7 +137,8 @@ export function costText(l: Line): string | undefined {
   if (l.kind === 'ready') return undefined
   if (l.kind === 'expired') {
     if (l.nextColdUsd === undefined) return undefined
-    return l.freshUsd === undefined ? `next ${usd(l.nextColdUsd)}` : `next ${usd(l.nextColdUsd)} ⇄${usd(l.freshUsd)}`
+    const next = `next ${usd(l.nextColdUsd)}`
+    return l.coldStartUsd === undefined ? next : `${next} ⇄${usd(l.coldStartUsd)}`
   }
   if (l.nextWarmUsd === undefined) return undefined
   const parts = [l.pingsUsd, l.nextWarmUsd, ...(l.holdUsd ? [l.holdUsd] : [])]
@@ -179,7 +178,7 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
   },
   { text: format({ kind: 'expired', nextColdUsd: 0.98 }, 0), meaning: 'the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now' },
   {
-    text: format({ kind: 'expired', nextColdUsd: 0.98, freshUsd: 0.3 }, 0),
+    text: format({ kind: 'expired', nextColdUsd: 0.98, coldStartUsd: 0.3 }, 0),
     meaning: 'the same, and a new session would pay $0.30 for its first turn (its start prompt, written anew): the floor of a handoff, shown only when it is cheaper',
   },
   { text: NODE_ERROR, meaning: '`node` on `PATH` is missing or too old to run the hooks, so keeper does nothing' },
@@ -206,6 +205,7 @@ let nodeBroken: boolean | undefined
 let requested: { sid: string; at: number; ttlSec?: 300 | 3600 } | undefined
 
 /** The bucket a usage object wrote: from the API's `cache_creation` split, or the same two fields flat (a `turn.step` result). */
+// INVARIANT: src/transcript.ts `ttlOfUsage` is the source of this rule for the split form (the mod cannot import src/); keep the two in step.
 export function ttlOfUsage(u: unknown): 300 | 3600 | undefined {
   if (!u || typeof u !== 'object') return undefined
   const flat = u as Json
@@ -216,6 +216,12 @@ export function ttlOfUsage(u: unknown): 300 | 3600 | undefined {
 
 /** Lines the client writes itself: they send no request. */
 const LOCAL_ONLY = /^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr)>/
+
+function promptText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) return content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('')
+  return ''
+}
 
 /** When the request that a transcript line starts began, ms since the epoch; undefined for any other line. */
 // INVARIANT: src/transcript.ts `requestStartFromLine` is the source of this rule (the mod cannot import src/); keep the two in step.
@@ -232,7 +238,8 @@ export function requestStartOf(line: string): number | undefined {
   const isToolResult = Array.isArray(content) && content.some((b: any) => b && typeof b === 'object' && b.type === 'tool_result')
   if (!isToolResult) {
     if (rec.isCompactSummary === true) return undefined
-    const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('') : ''
+    const text = promptText(content)
+    // The interrupt note is written after the request already went out and renewed the cache.
     if (LOCAL_ONLY.test(text) || text.startsWith('[Request interrupted')) return undefined
   }
   const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
@@ -265,10 +272,13 @@ export function seedOf(transcriptTail: string, ledgerTail: string, sid: string, 
     if (!line.includes('"wake-hit"') || !line.includes(sid)) continue
     try {
       const e = JSON.parse(line)
+      if (e.sessionId !== sid || e.event !== 'wake-hit') continue
+      if ((num(e.cacheRead) ?? 0) + (num(e.cacheWrite) ?? 0) <= 0) continue
       const at = typeof e.t === 'string' ? Date.parse(e.t) : NaN
-      if (e.sessionId === sid && e.event === 'wake-hit' && (num(e.cacheRead) ?? 0) + (num(e.cacheWrite) ?? 0) > 0 && at <= now + MAX_FUTURE_MS) hit = Math.max(hit, at)
+      if (!(at <= now + MAX_FUTURE_MS)) continue
+      hit = Math.max(hit, at)
     } catch {
-      // Same.
+      // A torn line says nothing.
     }
   }
   const lastRequestAt = Math.max(started ?? 0, hit)
@@ -278,30 +288,40 @@ export function seedOf(transcriptTail: string, ledgerTail: string, sid: string, 
 
 const TAIL_BYTES = 256 * 1024
 
-// Read again only when a file changed size: an idle session refreshes every 30 s, and a tail of 256 KiB is not worth that.
-const tailMemo: Record<string, { size: number; text: string } | undefined> = {}
+// Computed again only when a file changed size: an idle session refreshes every 30 s, and a tail of 256 KiB is not worth that.
+let seedMemo: { key: string; seed: Json | undefined } | undefined
 
-async function readTail($: $, path: string): Promise<string> {
+async function sizeOf($: $, path: string | undefined): Promise<number> {
   try {
-    const { size } = await $.fs.stat(path)
-    const known = tailMemo[path]
-    if (known?.size === size) return known.text
+    return path ? (await $.fs.stat(path)).size : -1
+  } catch {
+    return -1
+  }
+}
+
+async function readTail($: $, path: string, size: number): Promise<string> {
+  if (size < 0) return ''
+  try {
     const offset = Math.max(0, size - TAIL_BYTES)
     const raw = await $.fs.read(path, { offset, length: size - offset })
     // The cut lands inside a line: drop that partial one.
-    const text = offset > 0 ? raw.slice(raw.indexOf('\n') + 1) : raw
-    tailMemo[path] = { size, text }
-    return text
+    return offset > 0 ? raw.slice(raw.indexOf('\n') + 1) : raw
   } catch {
     return ''
   }
 }
 
-async function seedFor($: $, sid: string, home: string, now: number): Promise<Json | undefined> {
+async function readSeed($: $, sid: string, home: string, now: number): Promise<Json | undefined> {
   try {
     const { transcriptPath } = await $.session.info()
-    const [transcript, ledger] = await Promise.all([transcriptPath ? readTail($, transcriptPath) : '', readTail($, `${home}/ledger.jsonl`)])
-    return seedOf(transcript, ledger, sid, now)
+    const ledgerPath = `${home}/ledger.jsonl`
+    const [transcriptSize, ledgerSize] = await Promise.all([sizeOf($, transcriptPath), sizeOf($, ledgerPath)])
+    const key = `${sid}|${transcriptPath}|${transcriptSize}|${ledgerSize}`
+    if (seedMemo?.key === key) return seedMemo.seed
+    const [transcript, ledger] = await Promise.all([transcriptPath ? readTail($, transcriptPath, transcriptSize) : '', readTail($, ledgerPath, ledgerSize)])
+    const seed = seedOf(transcript, ledger, sid, now)
+    seedMemo = { key, seed }
+    return seed
   } catch {
     return undefined
   }
@@ -347,7 +367,8 @@ export async function refresh($: $): Promise<void> {
     if (failed !== undefined && shown(config ?? {}, env)) return clear($, failed)
     const now = await $.clock.now()
     const req = requested?.sid === sid ? requested : undefined
-    const line = lineOf(session ?? (await seedFor($, sid, home, now)), config ?? {}, env, now, tuning, req?.at, req?.ttlSec)
+    if (session) seedMemo = undefined
+    const line = lineOf(session ?? (await readSeed($, sid, home, now)),config ?? {}, env, now, tuning, req?.at, req?.ttlSec)
     const offsetMin = new Date(line?.kind === 'cached' ? line.warmUntil : now).getTimezoneOffset()
     if (line !== undefined && bandOn(config ?? {})) {
       // The band draws the line with buttons; the status line would only repeat it.
@@ -378,7 +399,7 @@ export function statusStarted($: $): void {
 export async function statusRequested($: $): Promise<void> {
   try {
     const sid = await $.session.id()
-    requested = { sid, at: await $.clock.now(), ...(requested?.sid === sid && requested.ttlSec !== undefined ? { ttlSec: requested.ttlSec } : {}) }
+    requested = { ...(requested?.sid === sid ? requested : {}), sid, at: await $.clock.now() }
   } catch {
     return
   }
