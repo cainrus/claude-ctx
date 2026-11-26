@@ -18,13 +18,13 @@ export interface TurnUsage {
 
 export interface MainTurn {
   usage?: TurnUsage
-  /** Epoch ms the latest request started that is not newer than `usage` (a queued prompt, written already, is not its request). */
+  /** Epoch ms of the latest request start written before `usage` in the file (a prompt written after it is not its request); with no `usage`, the newest start. */
   requestStart?: number
   /** The bucket of the newest request at or after the turn's start that wrote one. */
   ttlSec?: 300 | 3600
 }
 
-/** Most a backward or forward scan reads: past this a transcript line is not worth the Stop hook's time. */
+/** Most `lastMainTurn` and `firstMainUsage` read: past this a transcript line is not worth the Stop hook's time. */
 export const MAX_SCAN_BYTES = 16 * 1024 * 1024
 
 const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0)
@@ -105,7 +105,8 @@ export function requestStartFromLine(line: string): number | undefined {
   return Number.isFinite(ts) ? ts : undefined
 }
 
-function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean): void {
+/** `maxBytes` bounds the scan; the readers that existed before it was added pass none and read as far as they need. */
+function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit: (line: string) => boolean, maxBytes = Infinity): void {
   let scanned = 0
   let fd: number
   try {
@@ -117,7 +118,7 @@ function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit:
     let end = fstatSync(fd).size
     let chunk = Math.max(1024, initialChunk)
     for (;;) {
-      const start = Math.max(0, end - Math.min(chunk, MAX_SCAN_BYTES - scanned))
+      const start = Math.max(0, end - Math.min(chunk, maxBytes - scanned))
       const buf = Buffer.alloc(end - start)
       readSync(fd, buf, 0, buf.length, start)
       const lines = buf.toString('utf8').split('\n')
@@ -126,7 +127,7 @@ function scanLinesBackwards(transcriptPath: string, initialChunk: number, visit:
         if (visit(lines[i])) return
       }
       scanned += buf.length
-      if (start === 0 || scanned >= MAX_SCAN_BYTES) return
+      if (start === 0 || scanned >= maxBytes) return
       const firstBreak = buf.indexOf(0x0a)
       end = start + (firstBreak < 0 ? buf.length : firstBreak)
       chunk *= 4
@@ -148,38 +149,41 @@ function scanBackwards(transcriptPath: string, initialChunk: number, visit: (u: 
 /** The last main-thread usage, when its request started and which bucket the turn (from `sinceMs`) wrote, in one backward pass. */
 export function lastMainTurn(transcriptPath: string, initialChunk = 256 * 1024, sinceMs = 0): MainTurn {
   const turn: MainTurn = {}
-  // Starts met before the answer was (newer lines in the file): the answer decides which of them is its own.
-  const newer: number[] = []
+  // The request start is the latest qualifying user line that comes BEFORE the final answer in FILE ORDER, never by comparing
+  // timestamps: a prompt typed while the answer streams is stamped earlier than it but written after it, and is not its request.
+  let newest: number | undefined
   let turnOver = false
   scanLinesBackwards(transcriptPath, initialChunk, (line) => {
     const u = usageFromLine(line)
     if (u) {
-      if (turn.usage === undefined) {
-        turn.usage = u
-        turn.requestStart = newer.find((s) => s <= (u.timestamp ?? Infinity))
-      }
+      turn.usage ??= u
       if (u.timestamp !== undefined && u.timestamp < sinceMs) turnOver = true
       else if (!turnOver) turn.ttlSec ??= u.ttlSec
     } else if (turn.requestStart === undefined) {
       const s = requestStartFromLine(line)
       if (s !== undefined) {
-        if (turn.usage === undefined) newer.push(s)
-        else if (s <= (turn.usage.timestamp ?? Infinity)) turn.requestStart = s
+        if (turn.usage === undefined) newest ??= s
+        else turn.requestStart = s
       }
     }
     return turn.usage !== undefined && turn.requestStart !== undefined && (turn.ttlSec !== undefined || turnOver)
-  })
-  if (turn.usage === undefined && newer.length > 0) turn.requestStart = newer[0]
+  }, MAX_SCAN_BYTES)
+  if (turn.usage === undefined && newest !== undefined) turn.requestStart = newest
   return turn
 }
 
 /** The session's first main-thread request, read from the front: the size of a start with nothing but the system prompt. */
 export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024, maxBytes = MAX_SCAN_BYTES): TurnUsage | undefined {
+  return scanFirstMainUsage(transcriptPath, chunk, maxBytes).usage
+}
+
+/** `complete`: the scan reached the end of the file or its cap, so no usage means none will be found; false after an open or read error, which a later try may not repeat. */
+export function scanFirstMainUsage(transcriptPath: string, chunk = 64 * 1024, maxBytes = MAX_SCAN_BYTES): { usage?: TurnUsage; complete: boolean } {
   let fd: number
   try {
     fd = openSync(transcriptPath, 'r')
   } catch {
-    return undefined
+    return { complete: false }
   }
   try {
     const buf = Buffer.alloc(chunk)
@@ -187,9 +191,9 @@ export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024, maxByt
     let scanned = 0
     for (;;) {
       const got = readSync(fd, buf, 0, chunk, null)
-      if (got === 0) return usageFromLine(carry.toString('utf8'))
+      if (got === 0) return { usage: usageFromLine(carry.toString('utf8')), complete: true }
       scanned += got
-      if (scanned > maxBytes) return undefined
+      if (scanned > maxBytes) return { complete: true }
       // WARNING: decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
       const bytes = Buffer.concat([carry, buf.subarray(0, got)])
       const lastBreak = bytes.lastIndexOf(0x0a)
@@ -199,12 +203,12 @@ export function firstMainUsage(transcriptPath: string, chunk = 64 * 1024, maxByt
       }
       for (const line of bytes.subarray(0, lastBreak).toString('utf8').split('\n')) {
         const u = usageFromLine(line)
-        if (u) return u
+        if (u) return { usage: u, complete: true }
       }
       carry = bytes.subarray(lastBreak + 1)
     }
   } catch {
-    return undefined
+    return { complete: false }
   } finally {
     closeSync(fd)
   }

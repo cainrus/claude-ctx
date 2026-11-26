@@ -2,8 +2,8 @@
  * The status line: one pinned line under the prompt saying whether keeper is on
  * and until when this session's prompt cache stays warm, counted from the start
  * of the last model request, in the bucket it really wrote. It refreshes as each
- * request goes out, after each turn and every 30 s; a resumed session is read from
- * its transcript and keeper's ledger. Once cold, it says what the next turn costs
+ * request goes out, after each turn and every 30 s; a resumed session shows `ready`
+ * until its next request. Once cold, it says what the next turn costs
  * and, when cheaper, a new session's first turn; it also says when `node` on PATH
  * cannot run the hooks. Set `"statusLine": false` in config.json to turn it off.
  * Where the mod loads, band.ts draws the line above the prompt and this one
@@ -35,8 +35,10 @@ export type Line =
       kind: 'cached'
       /** Pings keeper may still send in this stretch. */
       left: number
-      /** Whether a ping can still come; false makes the deadline final. */
+      /** Whether the automatic ping can still land on a warm cache: only then is there a held end to show. */
       extends: boolean
+      /** Whether a ping can be pressed now: the cache is warm, pings are left and the session is not muted (what `ping-now` accepts). False makes the deadline final. */
+      pingable: boolean
       /** When the cache goes cold if nothing else is sent, ms since the epoch. */
       warmUntil: number
       /**
@@ -109,7 +111,7 @@ export function lineOf(
   const extendsIt = left > 0 && bigEnough && !muted && pingFrom + minAgeMs < warmUntil
   const heldUntil = extendsIt ? warmUntil + left * minAgeMs : warmUntil
   const pingsUsd = Math.max(0, num(session?.pingCostUsd) ?? 0)
-  const line: Line = { kind: 'cached', left, extends: extendsIt, warmUntil, heldUntil, pingsUsd }
+  const line: Line = { kind: 'cached', left, extends: extendsIt, pingable: left > 0 && !muted, warmUntil, heldUntil, pingsUsd }
   if (warmUntil - now <= Math.min(WARN_SEC, ttlSec / 2) * 1000) line.warn = true
   const nextWarmUsd = num(session?.warmTurnUsd)
   if (nextWarmUsd !== undefined) Object.assign(line, { nextWarmUsd, holdUsd: heldUntil > warmUntil ? left * nextWarmUsd : 0 })
@@ -123,7 +125,7 @@ const hhmmAt = (at: number, offsetMin: number): string => {
   return `${String(local.getUTCHours()).padStart(2, '0')}:${String(local.getUTCMinutes()).padStart(2, '0')}`
 }
 
-/** The time part: `◉ 14:00→~16:35` while pings can hold the cache, `◉ 14:00` when that end is final. */
+/** The time part: `◉ 14:00→~16:35` while the automatic pings can hold the cache, `◉ 14:00` otherwise. */
 export function timeText(l: Line, offsetMin: number): string {
   if (l.kind === 'ready') return '○ ready'
   if (l.kind === 'expired') return '○ cold'
@@ -161,9 +163,9 @@ export function errorLine(session: Json | undefined, home: string): string | und
 const EXAMPLE_AT = Date.UTC(2026, 0, 1, 14, 5)
 
 export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> = Object.freeze([
-  { text: format({ kind: 'ready' }, 0), meaning: 'keeper is on; nothing has been sent in this session yet' },
+  { text: format({ kind: 'ready' }, 0), meaning: 'keeper is on; no request seen in this session yet (a resumed session too)' },
   {
-    text: format({ kind: 'cached', left: 3, extends: true, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT + 150 * 60_000, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0.15 }, 0),
+    text: format({ kind: 'cached', left: 3, extends: true, pingable: true, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT + 150 * 60_000, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0.15 }, 0),
     meaning:
       'the cache stays warm until 14:05 for sure, and keeper can extend it: if every ping left in this stretch (3 here) ' +
       'goes out, it holds until about 16:35. That end is the earliest one: a ping goes out once the cache is `minAgeSec` ' +
@@ -172,8 +174,10 @@ export const STATUS_EXAMPLES: ReadonlyArray<{ text: string; meaning: string }> =
       '`awaySec` and the away budget unspent: the line cannot see your keyboard, so away longer than that, 14:05 is final after all',
   },
   {
-    text: format({ kind: 'cached', left: 0, extends: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0 }, 0),
-    meaning: 'no ping is coming (none left, the context is too small to hold, the session is muted, or a ping missed), so 14:05 is final',
+    text: format({ kind: 'cached', left: 0, extends: false, pingable: false, warmUntil: EXAMPLE_AT, heldUntil: EXAMPLE_AT, pingsUsd: 0.17, nextWarmUsd: 0.05, holdUsd: 0 }, 0),
+    meaning:
+      'no ping is coming (none left, the context is too small to hold, the session is muted, a ping missed, or the first ping would land after the cache went cold), so 14:05 is final. ' +
+      'The band still offers `↻` while the cache is warm, a ping is left and the session is not muted: a ping you press goes out even when none would on its own',
   },
   { text: format({ kind: 'expired', nextColdUsd: 0.98 }, 0), meaning: 'the cache went cold; the next turn writes the whole context anew, at $0.98. Switching model costs nothing extra now' },
   {
@@ -211,153 +215,6 @@ export function ttlOfUsage(u: unknown): 300 | 3600 | undefined {
   const split = flat.cache_creation && typeof flat.cache_creation === 'object' ? (flat.cache_creation as Json) : flat
   if ((num(split.ephemeral_1h_input_tokens) ?? 0) > 0) return 3600
   return (num(split.ephemeral_5m_input_tokens) ?? 0) > 0 ? 300 : undefined
-}
-
-/** Lines the client writes itself: they send no request. */
-const LOCAL_ONLY = /^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr)>/
-
-function promptText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) return content.map((b: any) => (typeof b?.text === 'string' ? b.text : '')).join('')
-  return ''
-}
-
-/** When the request that a transcript line starts began, ms since the epoch; undefined for any other line. */
-// INVARIANT: src/transcript.ts `requestStartFromLine` is the source of this rule (the mod cannot import src/); keep the two in step.
-export function requestStartOf(line: string): number | undefined {
-  if (!line.includes('"user"')) return undefined
-  let rec: any
-  try {
-    rec = JSON.parse(line)
-  } catch {
-    return undefined
-  }
-  if (!rec || rec.type !== 'user' || rec.isSidechain === true) return undefined
-  const content = rec.message?.content
-  const isToolResult = Array.isArray(content) && content.some((b: any) => b && typeof b === 'object' && b.type === 'tool_result')
-  if (!isToolResult) {
-    if (rec.isCompactSummary === true) return undefined
-    const text = promptText(content)
-    // The interrupt note is written after the request already went out and renewed the cache.
-    if (LOCAL_ONLY.test(text) || text.startsWith('[Request interrupted')) return undefined
-  }
-  const ts = typeof rec.timestamp === 'string' ? Date.parse(rec.timestamp) : NaN
-  return Number.isFinite(ts) ? ts : undefined
-}
-
-const MAX_FUTURE_MS = 60_000
-
-/** The last request start and the bucket of the last write in a transcript tail. */
-function transcriptSeed(transcriptTail: string): { started?: number; ttlSec?: number } {
-  let started: number | undefined
-  let ttlSec: number | undefined
-  const lines = transcriptTail.split('\n')
-  for (let i = lines.length - 1; i >= 0 && (started === undefined || ttlSec === undefined); i--) {
-    const line = lines[i] ?? ''
-    if (started === undefined) started = requestStartOf(line)
-    if (ttlSec === undefined && line.includes('"assistant"') && !line.includes('"isSidechain":true')) {
-      try {
-        ttlSec = ttlOfUsage(JSON.parse(line)?.message?.usage)
-      } catch {
-        // A torn or foreign line says nothing.
-      }
-    }
-  }
-  return { started, ttlSec }
-}
-
-/** When the newest ping of this session that hit the cache went out; 0 if none. */
-function ledgerHitOf(ledgerTail: string, sid: string, now: number): number {
-  let hit = 0
-  for (const line of ledgerTail.split('\n')) {
-    if (!line.includes('"wake-hit"') || !line.includes(sid)) continue
-    try {
-      const e = JSON.parse(line)
-      if (e.sessionId !== sid || e.event !== 'wake-hit') continue
-      if ((num(e.cacheRead) ?? 0) + (num(e.cacheWrite) ?? 0) <= 0) continue
-      // The cache's clock restarted when the ping was sent; `t` is when it was scored, later by the ping's own duration.
-      const sent = typeof e.sentAt === 'string' ? Date.parse(e.sentAt) : NaN
-      const at = Number.isFinite(sent) ? sent : typeof e.t === 'string' ? Date.parse(e.t) : NaN
-      if (!(at <= now + MAX_FUTURE_MS)) continue
-      hit = Math.max(hit, at)
-    } catch {
-      // A torn line says nothing.
-    }
-  }
-  return hit
-}
-
-/**
- * A session with no anchor (resumed: SessionEnd deleted its record) read from the tails of its transcript and of keeper's
- * ledger: the last request start, the bucket of the last write, and a ping that hit after it. Undefined when neither says anything.
- */
-export function seedOf(transcriptTail: string, ledgerTail: string, sid: string, now: number): Json | undefined {
-  const { started, ttlSec } = transcriptSeed(transcriptTail)
-  const cacheAnchorAt = Math.max(started ?? 0, ledgerHitOf(ledgerTail, sid, now))
-  if (cacheAnchorAt === 0) return undefined
-  return { cacheAnchorAt, ...(ttlSec !== undefined ? { cacheTtlSec: ttlSec } : {}) }
-}
-
-const TAIL_BYTES = 256 * 1024
-const MAX_TAIL_BYTES = 16 * 1024 * 1024
-
-// Computed again only when a file changed size: an idle session refreshes every 30 s, and a tail of 256 KiB is not worth that.
-let seedMemo: { key: string; seed: Json | undefined } | undefined
-
-async function sizeOf($: $, path: string | undefined): Promise<number> {
-  try {
-    return path ? (await $.fs.stat(path)).size : -1
-  } catch {
-    return -1
-  }
-}
-
-/** The complete lines at the end of a file: the window grows x4 (like src/transcript.ts scanLinesBackwards) until `enough` accepts its text, the file starts, or MAX_TAIL_BYTES. */
-async function readTail($: $, path: string, size: number, enough: (text: string) => boolean): Promise<string> {
-  if (size < 0) return ''
-  try {
-    for (let bytes = TAIL_BYTES; ; bytes *= 4) {
-      const length = Math.min(size, bytes)
-      const offset = size - length
-      const raw = await $.fs.read(path, { offset, length })
-      // The cut lands inside a line: drop that partial one. No newline at all = the window holds no complete line.
-      const text = offset === 0 ? raw : raw.indexOf('\n') < 0 ? '' : raw.slice(raw.indexOf('\n') + 1)
-      if (offset === 0 || length >= MAX_TAIL_BYTES || enough(text)) return text
-    }
-  } catch {
-    return ''
-  }
-}
-
-const holdsRequestStart = (text: string): boolean => text.split('\n').some((line) => requestStartOf(line) !== undefined)
-
-/** Whether a ledger window already reaches back past `before`: older entries cannot move the anchor. */
-function startsBefore(text: string, before: number | undefined): boolean {
-  if (before === undefined) return false
-  const first = text.slice(0, text.indexOf('\n') < 0 ? undefined : text.indexOf('\n'))
-  try {
-    return Date.parse(JSON.parse(first)?.t) < before
-  } catch {
-    return false
-  }
-}
-
-async function readSeed($: $, sid: string, home: string, now: number): Promise<Json | undefined> {
-  try {
-    const { transcriptPath } = await $.session.info()
-    const ledgerPath = `${home}/ledger.jsonl`
-    const [transcriptSize, ledgerSize] = await Promise.all([sizeOf($, transcriptPath), sizeOf($, ledgerPath)])
-    const key = `${sid}|${transcriptPath}|${transcriptSize}|${ledgerSize}`
-    if (seedMemo?.key === key) return seedMemo.seed
-    const transcript = transcriptPath ? await readTail($, transcriptPath, transcriptSize, holdsRequestStart) : ''
-    const started = transcriptSeed(transcript).started
-    const ledger = await readTail($, ledgerPath, ledgerSize, (text) => ledgerHitOf(text, sid, now) > 0 || startsBefore(text, started))
-    const seed = seedOf(transcript, ledger, sid, now)
-    seedMemo = { key, seed }
-    return seed
-  } catch {
-    return undefined
-  }
 }
 
 async function checkNode($: $): Promise<void> {
@@ -400,11 +257,7 @@ export async function refresh($: $): Promise<void> {
     if (failed !== undefined && shown(config ?? {}, env)) return clear($, failed)
     const now = await $.clock.now()
     const req = requested?.sid === sid ? requested : undefined
-    // A record made before any request went out (a first prompt held by the handoff ask, `done`) has no anchor: the seed speaks.
-    const anchored = num(session?.cacheAnchorAt) !== undefined || num(session?.lastTurnEndAt) !== undefined
-    if (anchored) seedMemo = undefined
-    const seed = anchored ? undefined : await readSeed($, sid, home, now)
-    const line = lineOf(seed ? { ...session, ...seed } : session, config ?? {}, env, now, tuning, req?.at, req?.ttlSec)
+    const line = lineOf(session, config ?? {}, env, now, tuning, req?.at, req?.ttlSec)
     const offsetMin = new Date(line?.kind === 'cached' ? line.warmUntil : now).getTimezoneOffset()
     if (line !== undefined && bandOn(config ?? {})) {
       // The band draws the line with buttons; the status line would only repeat it.

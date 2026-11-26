@@ -8,11 +8,12 @@
  * Off: `"forkPings": false` or `CACHE_KEEPER_FORK=0`.
  */
 
-import { decideWake, MANUAL_FORK_MAX_MS, pingInFlight, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
+import { decideWake, MANUAL_FORK_MAX_MS, pingInFlight, PROMPT_STAMP_SLACK_MS, WAKE_MARKER, WAKE_MESSAGE, type Ctx, type HookInput } from './commands.ts'
 import { groupedTokens, hhmm, NOTHING_TO_HOLD } from './format.ts'
 import { appendLedger } from './ledger.ts'
 import { addPingCost } from './report.ts'
 import { closePing, compactedSinceRequest, forkOwns, loadSession, saveForkClaim, saveSession, warmUntilOf } from './state.ts'
+import { lastMainTurn, ttlOfUsage } from './transcript.ts'
 
 export const FORK_PROMPT = `${WAKE_MARKER} Reply with exactly "ok".`
 
@@ -25,6 +26,10 @@ export interface ForkResult {
     output_tokens?: number
     cache_read_input_tokens?: number
     cache_creation_input_tokens?: number
+    /** The split of the write by bucket, as the API returns it; a mod may hand the same two counts flat. */
+    cache_creation?: { ephemeral_1h_input_tokens?: number; ephemeral_5m_input_tokens?: number }
+    ephemeral_1h_input_tokens?: number
+    ephemeral_5m_input_tokens?: number
   }
 }
 
@@ -124,7 +129,10 @@ export function waitStart(input: ForkInput, ctx: Ctx, env: NodeJS.ProcessEnv = p
   // (#3683: 8 such rewrites in a week, longest wait 45 h). The asking request just renewed the cache: the stretch starts now.
   state.lastTurnEndAt = ctx.now
   state.lastRequestAt = ctx.now
-  state.cacheAnchorAt = ctx.now
+  // The server's clock runs from the asking request's start; a start outside this turn (or none) is not trusted: now.
+  const started = state.transcriptPath ? lastMainTurn(state.transcriptPath).requestStart : undefined
+  const inTurn = started !== undefined && started >= (state.lastHumanAt ?? 0) - PROMPT_STAMP_SLACK_MS && started <= ctx.now
+  state.cacheAnchorAt = inTurn ? started : ctx.now
   state.forkPingsHeld = 0
   state.waitingSince = ctx.now
   saveSession(home, state)
@@ -239,6 +247,9 @@ export function forked(input: ForkInput, ctx: Ctx): number {
     state.lastTurnEndAt = ctx.now
     // The server's clock restarted when the fork was sent, not when it came back.
     state.cacheAnchorAt = state.lastPingAt ?? ctx.now
+    // A ping that found the cache gone wrote a new one, maybe in the other bucket: the line counts the end from the bucket it wrote.
+    const bucket = ttlOfUsage({ cache_creation: f.usage.cache_creation ?? f.usage })
+    if (bucket !== undefined) state.cacheTtlSec = bucket
   }
   state.forkPingsHeld = (state.forkPingsHeld ?? 0) + 1
   saveForkClaim(home, sid, ctx.now)

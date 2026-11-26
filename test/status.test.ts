@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { format, lineOf, nodeOk, refresh, requestStartOf, seedOf, statusRequested, statusStepAnswered, ttlOfUsage } from '../hooks/status.ts'
+import { format, lineOf, nodeOk, refresh, statusRequested, statusStepAnswered, ttlOfUsage } from '../hooks/status.ts'
 import { decide, THRESHOLDS } from '../src/policy.ts'
-import { requestStartFromLine, ttlOfUsage as ttlOfUsageSrc } from '../src/transcript.ts'
-import { assistantLine, REQUEST_START_AT, REQUEST_START_CASES, SID, TTL_OF_USAGE_CASES, userLine } from './helpers.ts'
+import { ttlOfUsage as ttlOfUsageSrc } from '../src/transcript.ts'
+import { assistantLine, SID, TTL_OF_USAGE_CASES, userLine } from './helpers.ts'
 
 const T = 1_800_000_000_000
 const MIN = 60_000
@@ -16,6 +16,7 @@ const cached = (left: number, ext: boolean, warmUntil: number, pingsUsd = 0) => 
   kind: 'cached' as const,
   left,
   extends: ext,
+  pingable: left > 0,
   warmUntil,
   heldUntil: ext ? warmUntil + left * PING_EVERY : warmUntil,
   pingsUsd,
@@ -55,7 +56,8 @@ test('the far end is the earliest one: each ping adds minAgeSec, from env, confi
   const short = pick(lineOf(session({ warmTurnUsd: 0.05 }), { maxPings: 2, cacheTtlSec: 300 }, {}, T))
   assert.equal(short.heldUntil, short.warmUntil)
   assert.equal(short.holdUsd, 0)
-  assert.equal(short.extends, false, 'final, and no ping button on the band')
+  assert.equal(short.extends, false, 'no automatic ping lands warm')
+  assert.equal(short.pingable, true, 'a pressed one does')
   const edge = pick(lineOf(session(), { maxPings: 2, cacheTtlSec: 3000 }, {}, T))
   assert.equal(edge.heldUntil, edge.warmUntil, 'a ping at exactly the TTL lands cold too')
 })
@@ -76,6 +78,11 @@ test('no ping left, a small context or a muted session make the deadline final',
   assert.equal(pick(lineOf(session({ ctxTokens: 1000 }), {}, {}, T)).extends, false)
   assert.equal(pick(lineOf(session({ doneAt: T }), {}, {}, T)).extends, false)
   assert.equal(pick(lineOf(session({ lastPingHit: false }), {}, {}, T)).extends, false)
+  // A button is offered while a ping is left and the session is not muted, whatever the context size.
+  assert.equal(pick(lineOf(session({ ctxTokens: 1000 }), {}, {}, T)).pingable, true)
+  assert.equal(pick(lineOf(session({ doneAt: T }), {}, {}, T)).pingable, false)
+  assert.equal(pick(lineOf(session({ lastPingHit: false }), {}, {}, T)).pingable, false)
+  assert.equal(pick(lineOf(session({ pingsSoFar: 4 }), { maxPings: 4 }, {}, T)).pingable, false)
   assert.equal(pick(lineOf(session({ lastPingHit: true }), {}, {}, T)).extends, true)
   assert.equal(pick(lineOf(session({ pingsSoFar: 9 }), { maxPings: 4 }, {}, T)).left, 0)
 })
@@ -223,7 +230,8 @@ test('a ping holds only if the first one can still land warm: it fires minAgeSec
   // A 5-minute bucket: the cache is cold long before the first ping (50 min after the turn).
   const five = pick(lineOf(session({ cacheTtlSec: 300 }), { maxPings: 2 }, {}, T))
   assert.equal(five.extends, false)
-  assert.equal(five.heldUntil, five.warmUntil, 'no held end, no ping button')
+  assert.equal(five.heldUntil, five.warmUntil, 'no held end')
+  assert.equal(five.pingable, true, 'a press still lands while the cache is warm, so the button stays')
   // A 1-hour bucket, but a request that ran 20 minutes: warm until T+60 from the start; the ping timer starts at T+20, fires at T+70.
   const long = pick(lineOf(session({ lastTurnEndAt: T + 20 * MIN, cacheAnchorAt: T }), { maxPings: 2 }, {}, T + 21 * MIN))
   assert.equal(long.extends, false)
@@ -257,13 +265,6 @@ test('the first-turn price of a new session is shown only after the cold price, 
   assert.equal(format(warm, 0).includes('⇄'), false, 'warm: no ⇄')
 })
 
-test('requestStartOf (the mod) and requestStartFromLine (src) read the same table', () => {
-  for (const c of REQUEST_START_CASES) {
-    assert.equal(requestStartOf(c.line), c.starts ? REQUEST_START_AT : undefined, c.name)
-    assert.equal(requestStartOf(c.line), requestStartFromLine(c.line), c.name)
-  }
-})
-
 test('ttlOfUsage (the mod) and ttlOfUsage (src) read the same table', () => {
   for (const c of TTL_OF_USAGE_CASES) {
     assert.equal(ttlOfUsage(c.usage), c.ttlSec, c.name)
@@ -277,34 +278,6 @@ test('ttlOfUsage (the mod) also reads a turn.step usage', () => {
   assert.equal(ttlOfUsage({ ephemeral_1h_input_tokens: 5 }), 3600)
   assert.equal(ttlOfUsage({ ephemeral_5m_input_tokens: 5, ephemeral_1h_input_tokens: 0 }), 300)
   for (const none of [null, undefined, 'x', {}, { input_tokens: 4 }, { cache_creation: {} }]) assert.equal(ttlOfUsage(none), undefined)
-})
-
-const ledgerLine = (t: number, over: Record<string, unknown> = {}) => JSON.stringify({ t: new Date(t).toISOString(), sessionId: SID, event: 'wake-hit', cacheRead: 90_000, cacheWrite: 0, ...over })
-
-test('a resumed session with no record is read from its transcript: request start and bucket', () => {
-  const tail = [userLine(T, 'hi'), assistantLine({ at: T + 20_000, write: 900, split: { m5: 900 } }), userLine(T + 100_000, [{ type: 'tool_result', content: 'ok' }]), assistantLine({ at: T + 110_000, read: 900 })].join('\n')
-  assert.deepEqual(seedOf(tail, '', SID, T + 200_000), { cacheAnchorAt: T + 100_000, cacheTtlSec: 300 })
-  assert.deepEqual(seedOf(userLine(T, 'x'), '', SID, T), { cacheAnchorAt: T })
-  assert.equal(seedOf('', '', SID, T), undefined)
-  assert.equal(seedOf(assistantLine({ at: T, read: 1 }), '', SID, T), undefined)
-})
-
-test('the ledger can move the anchor: a newer wake-hit of this session, not a miss, a future one, or another session', () => {
-  const tail = userLine(T, 'hi')
-  const seed = (ledger: string[], now = T + 70 * MIN) => seedOf(tail, ledger.join('\n'), SID, now)?.cacheAnchorAt
-  assert.equal(seed([ledgerLine(T + 50 * MIN)]), T + 50 * MIN)
-  assert.equal(seed([ledgerLine(T + 50 * MIN), ledgerLine(T + 20 * MIN)]), T + 50 * MIN, 'the newest')
-  assert.equal(seed([ledgerLine(T - MIN)]), T, 'older than the request start')
-  assert.equal(seed([ledgerLine(T + 50 * MIN, { event: 'wake-miss' })]), T)
-  assert.equal(seed([ledgerLine(T + 50 * MIN, { cacheRead: 0, cacheWrite: 0 })]), T, 'nothing read or written')
-  assert.equal(seed([ledgerLine(T + 50 * MIN, { sessionId: 'other' })]), T)
-  assert.equal(seed([ledgerLine(T + 90 * MIN)], T + 70 * MIN), T, 'more than 60 s in the future')
-  assert.equal(seed([ledgerLine(T + 70 * MIN + 30_000)], T + 70 * MIN), T + 70 * MIN + 30_000, 'a few seconds ahead is clock skew')
-  assert.equal(seedOf('', ledgerLine(T + 50 * MIN), SID, T + 70 * MIN)?.cacheAnchorAt, T + 50 * MIN, 'no transcript, a hit alone')
-  // The ping's own send time, when the entry has it: the cache's clock restarted then, not when the Stop scored it.
-  assert.equal(seed([ledgerLine(T + 50 * MIN, { sentAt: new Date(T + 49 * MIN).toISOString() })]), T + 49 * MIN)
-  assert.equal(seed([ledgerLine(T + 50 * MIN, { sentAt: 'garbage' })]), T + 50 * MIN, 'an unreadable sentAt falls back to t')
-  assert.equal(seed(['{not json "wake-hit" ' + SID, ledgerLine(T + 50 * MIN)]), T + 50 * MIN)
 })
 
 /** The engine as refresh() touches it; `files` is what $.fs serves, `shown` every status text. */
@@ -336,79 +309,17 @@ function fakeMod(o: { now: number; files?: Record<string, string>; sid?: string;
   return $
 }
 
-test('refresh: a resumed session whose cache is still warm shows the end, not ready; one long past shows cold', async () => {
-  const now = Date.now()
-  const warm = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': `${userLine(now - 20 * MIN, 'hi')}\n${assistantLine({ at: now - 19 * MIN, read: 5 })}\n` } })
-  await refresh(warm as never)
-  assert.equal(warm.shown.at(-1), `◉ ${hhmm(now - 20 * MIN + H)}`)
-  const cold = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': `${userLine(now - 3 * H, 'hi')}\n` } })
-  await refresh(cold as never)
-  assert.equal(cold.shown.at(-1), '○ cold')
-  const empty = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': '' } })
-  await refresh(empty as never)
-  assert.equal(empty.shown.at(-1), '○ ready')
-})
 
-test('refresh: a ledger hit after the last request keeps a resumed session warm, and the tails are not re-read until a file grows', async () => {
+test('refresh: a resumed session has no record, so it shows ready until its next request, and reads no transcript or ledger', async () => {
   const now = Date.now()
-  const files: Record<string, string> = {
-    '/t/transcript.jsonl': `${userLine(now - 70 * MIN, 'hi')}\n`,
-    '/h/ledger.jsonl': `${ledgerLine(now - 10 * MIN)}\n`,
+  const files = {
+    '/t/transcript.jsonl': `${userLine(now - 20 * MIN, 'hi')}\n${assistantLine({ at: now - 19 * MIN, read: 5 })}\n`,
+    '/h/ledger.jsonl': '{"event":"wake-hit"}\n',
   }
   const $ = fakeMod({ now, config: { band: false }, files })
-  await refresh($ as never)
-  assert.equal($.shown.at(-1), `◉ ${hhmm(now - 10 * MIN + H)}`)
-  const readsBefore = $.reads.length
-  await refresh($ as never)
-  assert.equal($.reads.filter((p) => p.endsWith('transcript.jsonl') || p.endsWith('ledger.jsonl')).length, 2, 'read once')
-  assert.ok($.reads.length > readsBefore, 'config and state are read each time')
-})
-
-test('refresh: a transcript or ledger the mod cannot read leaves the line on ready, not blank', async () => {
-  const $ = fakeMod({ now: Date.now(), config: { band: false } })
   await refresh($ as never)
   assert.equal($.shown.at(-1), '○ ready')
-})
-
-test('refresh: a record with no anchor (a prompt held before any request, or done) still lets the transcript speak', async () => {
-  const now = Date.now()
-  const files = {
-    ['/h/sessions/' + SID + '.json']: JSON.stringify({ lastHumanAt: now - MIN, doneAt: now - MIN }),
-    '/t/transcript.jsonl': `${userLine(now - 20 * MIN, 'hi')}\n${assistantLine({ at: now - 19 * MIN, read: 5 })}\n`,
-  }
-  const $ = fakeMod({ now, config: { band: false }, files })
-  await refresh($ as never)
-  assert.equal($.shown.at(-1), `◉ ${hhmm(now - 20 * MIN + H)}`)
-  const cold = fakeMod({ now, config: { band: false }, files: { ...files, '/t/transcript.jsonl': `${userLine(now - 3 * H, 'hi')}\n` } })
-  await refresh(cold as never)
-  assert.equal(cold.shown.at(-1), '○ cold')
-})
-
-test('refresh: a request start behind a transcript line larger than the first window is still found', async () => {
-  const now = Date.now()
-  const huge = assistantLine({ at: now - 19 * MIN, read: 5 }, { pad: 'x'.repeat(600 * 1024) })
-  const $ = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': `${userLine(now - 20 * MIN, 'hi')}\n${huge}\n` } })
-  await refresh($ as never)
-  assert.equal($.shown.at(-1), `◉ ${hhmm(now - 20 * MIN + H)}`)
-})
-
-test('refresh: a transcript that is one line with no newline in the window holds no complete line, so it grows to the file start', async () => {
-  const now = Date.now()
-  const only = userLine(now - 20 * MIN, 'x'.repeat(900 * 1024))
-  const $ = fakeMod({ now, config: { band: false }, files: { '/t/transcript.jsonl': only } })
-  await refresh($ as never)
-  assert.equal($.shown.at(-1), `◉ ${hhmm(now - 20 * MIN + H)}`)
-})
-
-test("refresh: this session's wake-hit is found though other sessions wrote more than a window after it", async () => {
-  const now = Date.now()
-  const others = Array.from({ length: 4_000 }, (_, i) => ledgerLine(now - 9 * MIN + i, { sessionId: 'other-' + i, event: 'skip', pad: 'x'.repeat(100) }))
-  const files = {
-    '/t/transcript.jsonl': `${userLine(now - 70 * MIN, 'hi')}\n`,
-    '/h/ledger.jsonl': [ledgerLine(now - 10 * MIN), ...others].join('\n') + '\n',
-  }
-  assert.ok(Buffer.byteLength(files['/h/ledger.jsonl']) > 256 * 1024)
-  const $ = fakeMod({ now, config: { band: false }, files })
-  await refresh($ as never)
-  assert.equal($.shown.at(-1), `◉ ${hhmm(now - 10 * MIN + H)}`)
+  assert.deepEqual($.reads.filter((p) => p.endsWith('transcript.jsonl') || p.endsWith('ledger.jsonl')), [])
+  await statusRequested($ as never)
+  assert.equal($.shown.at(-1), `◉ ${hhmm(now + H)}`, 'its first request anchors the line')
 })

@@ -19,7 +19,7 @@ import {
   saveSession,
   type SessionState,
 } from './state.ts'
-import { firstMainUsage, firstMainUsageSince, lastMainTurn, type MainTurn } from './transcript.ts'
+import { firstMainUsageSince, lastMainTurn, scanFirstMainUsage, type MainTurn } from './transcript.ts'
 import { tunedMaxPings } from './tune.ts'
 import type { SessionFacts, Verdict } from './veto.ts'
 import { WAKE_REPLY } from './wake-text.ts'
@@ -38,7 +38,7 @@ export interface HookInput {
 }
 
 const GATE_STOP_WINDOW_MS = 30_000
-const PROMPT_STAMP_SLACK_MS = 5_000
+export const PROMPT_STAMP_SLACK_MS = 5_000
 
 export interface Ctx {
   config: Config
@@ -167,7 +167,12 @@ export function record(input: HookInput, ctx: Ctx): number {
     Object.assign(state, turnPrices(state.ctxTokens, state.model, ctx.config.prices))
     // A read-only last request keeps the bucket an earlier request of the same turn wrote; a turn that wrote none keeps the previous one.
     if (turn.ttlSec !== undefined) state.cacheTtlSec = turn.ttlSec
-    state.coldStartTokens ??= state.transcriptPath ? (firstMainUsage(state.transcriptPath)?.ctxTokens ?? 0) : 0
+    // 0 = searched and not found (a first request out of the cap); an open or read error leaves it unset, so a later Stop tries again.
+    if (state.coldStartTokens === undefined) {
+      const first = state.transcriptPath ? scanFirstMainUsage(state.transcriptPath) : { complete: true }
+      if (first.usage) state.coldStartTokens = first.usage.ctxTokens
+      else if (first.complete) state.coldStartTokens = 0
+    }
   }
   if (state.coldStartTokens) state.coldStartUsd = turnPrices(state.coldStartTokens, state.model, ctx.config.prices).coldTurnUsd
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { firstMainUsage, firstMainUsageSince, lastMainTurn, lastMainUsage, requestStartFromLine, usageFromLine } from '../src/transcript.ts'
+import { firstMainUsage, firstMainUsageSince, lastMainTurn, lastMainUsage, requestStartFromLine, scanFirstMainUsage, usageFromLine } from '../src/transcript.ts'
 import { assistantLine, FIXTURES, REQUEST_START_AT, REQUEST_START_CASES, tempHome, userLine, writeLines } from './helpers.ts'
 
 test('last main-thread usage skips sidechain, synthetic and non-assistant lines', () => {
@@ -198,4 +198,42 @@ test('lastMainTurn and firstMainUsage stop at the scan cap instead of reading a 
   const late = writeLines(dir, [...Array.from({ length: 3 }, () => pad), assistantLine({ at: 1_000, read: 1 })], 'late.jsonl')
   assert.equal(firstMainUsage(late, 64 * 1024, 1024 * 1024), undefined)
   assert.equal(firstMainUsage(late)?.cacheRead, 1, 'inside the default cap it is found')
+})
+
+test('the readers that predate the scan cap are not capped: firstMainUsageSince and lastMainUsage still find a request more than 16 MiB back', () => {
+  const dir = tempHome()
+  const pad = JSON.stringify({ type: 'progress', pad: 'x'.repeat(1024 * 1024) })
+  const p = writeLines(dir, [assistantLine({ at: 1_000, read: 1 }), ...Array.from({ length: 18 }, () => pad), assistantLine({ at: 2_000, read: 2 })])
+  assert.equal(firstMainUsageSince(p, 500)?.cacheRead, 1, 'the first request of the turn, 18 MiB back, not the newest inside the cap')
+  const only = writeLines(dir, [assistantLine({ at: 1_000, read: 1 }), ...Array.from({ length: 18 }, () => pad)], 'only.jsonl')
+  assert.equal(lastMainUsage(only)?.cacheRead, 1)
+  assert.equal(lastMainTurn(only).usage, undefined, 'the new reader stays capped')
+})
+
+test('lastMainTurn: the request start is the latest start before the answer in file order, whatever the timestamps say', () => {
+  const dir = tempHome()
+  const real = userLine(10_000, [{ type: 'tool_result', content: 'ok' }])
+  const answer = assistantLine({ at: 30_000, read: 2 })
+  // A prompt typed while the answer streamed is stamped before it but written after it: not the request's start.
+  const after = writeLines(dir, [userLine(1_000, 'first'), real, answer, userLine(28_000, 'queued')], 'after.jsonl')
+  assert.equal(lastMainTurn(after).requestStart, 10_000)
+  assert.equal(lastMainTurn(after, 1024).requestStart, 10_000)
+  // The same two lines the other way round in the file: file order says the prompt came first, so it is the start.
+  const before = writeLines(dir, [userLine(1_000, 'first'), real, userLine(28_000, 'queued'), answer], 'before.jsonl')
+  assert.equal(lastMainTurn(before).requestStart, 28_000)
+  // Stamped after the answer but written before it: still before it in the file.
+  const late = writeLines(dir, [userLine(1_000, 'first'), real, userLine(35_000, 'odd stamp'), answer], 'late.jsonl')
+  assert.equal(lastMainTurn(late).requestStart, 35_000)
+})
+
+test('scanFirstMainUsage: complete says whether "no usage" is final (end of file, the cap) or an error a later try may not repeat', () => {
+  const dir = tempHome()
+  assert.deepEqual(scanFirstMainUsage('/nonexistent/t.jsonl'), { complete: false })
+  assert.deepEqual(scanFirstMainUsage(writeLines(dir, [userLine(1, 'x')], 'none.jsonl')), { usage: undefined, complete: true })
+  const pad = JSON.stringify({ type: 'progress', pad: 'x'.repeat(1024 * 1024) })
+  const late = writeLines(dir, [...Array.from({ length: 3 }, () => pad), assistantLine({ at: 1_000, read: 1 })], 'late.jsonl')
+  assert.deepEqual(scanFirstMainUsage(late, 64 * 1024, 1024 * 1024), { complete: true })
+  const found = scanFirstMainUsage(late)
+  assert.equal(found.complete, true)
+  assert.equal(found.usage?.cacheRead, 1)
 })

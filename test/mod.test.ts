@@ -8,12 +8,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { record } from '../src/commands.ts'
 import { readLedger } from '../src/ledger.ts'
 import { loadSession } from '../src/state.ts'
 import { register } from '../hooks/gate.ts'
 import { manualPing } from '../hooks/keepalive.ts'
+import { refresh } from '../hooks/status.ts'
 import { configFor, makeCtx, MIN, SID, tempHome, writeTranscript } from './helpers.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -234,4 +237,37 @@ test('gate: AskUserQuestion holds the cache by fork while the person answers, an
   assert.ok(timers[0].ms >= 60_000, `timer at ${timers[0].ms} ms`)
   assert.equal(timers[0].cancelled, true, 'the answer stops the timer')
   assert.equal(loadSession(home, SID)!.waitingSince, undefined)
+})
+
+test('gate: a turn.step result that names a 5-minute write makes the status line end five minutes on', async () => {
+  const { home } = session()
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ band: false }))
+  const now = Date.now()
+  const shown: Array<string | undefined> = []
+  const { $: base } = fakeEngine(home, HIT)
+  const $ = {
+    ...base,
+    clock: { ...base.clock, now: async () => now },
+    env: { get: async (k: string) => (k === 'CACHE_KEEPER_HOME' ? home : undefined) },
+    fs: { read: async (p: string) => readFileSync(p, 'utf8') },
+    ui: { status: (t?: string) => void shown.push(t), invalidate: () => {} },
+  }
+  const hooks = hooksOf()
+  const step = async (usage: unknown) => {
+    const next = async function* () {
+      // The request is in flight for a moment, as a real one is: statusRequested has registered by the time it answers.
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { answer: 'ok', usage }
+    }
+    const gen = hooks['turn.step']($, { turnId: 't2', index: 1, agentId: undefined }, next)
+    let r = await gen.next()
+    while (!r.done) r = await gen.next()
+    await refresh($ as never)
+    return shown.at(-1)!
+  }
+  const hhmm = (ms: number) => `${String(new Date(ms).getHours()).padStart(2, '0')}:${String(new Date(ms).getMinutes()).padStart(2, '0')}`
+  assert.ok((await step({ input_tokens: 3 })).startsWith(`◉ ${hhmm(now + 60 * MIN)}`), 'no bucket named: the hour')
+  const five = await step({ ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 700 })
+  assert.ok(five.startsWith(`◉ ${hhmm(now + 5 * MIN)}`), five)
+  assert.ok(!five.includes('→~'), 'a 5-minute end has no held end')
 })

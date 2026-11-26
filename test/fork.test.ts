@@ -561,3 +561,37 @@ test('end: drops the claim with the session', () => {
   end({ session_id: SID }, makeCtx(config, T0 + 2000))
   assert.equal(existsSync(forkClaimPath(home, SID)), false)
 })
+
+test('forked: a ping that wrote a bucket moves cacheTtlSec to it, split or flat; one that names none leaves it', () => {
+  const { home, config } = setup()
+  arm({ session_id: SID }, ctxAt(config, T0 + 1000), INTERACTIVE)
+  const at = T0 + DUE
+  const send = (usage: NonNullable<ForkResult['usage']>, now: number) => {
+    call(forkWake, {}, ctxAt(config, now))
+    call(forked, { fork: { isAnswered: true, usage } }, ctxAt(config, now + 4000))
+    return loadSession(home, SID)!.cacheTtlSec
+  }
+  const written = { input_tokens: 3, cache_read_input_tokens: 91_000, cache_creation_input_tokens: 300, output_tokens: 2 }
+  assert.equal(send({ ...written, cache_creation: { ephemeral_1h_input_tokens: 0, ephemeral_5m_input_tokens: 91_000 } }, at), 300)
+  assert.equal(send(HIT.usage!, at + 55 * MIN), 300, 'a read-only ping names no bucket: the record keeps its own')
+  assert.equal(send({ ...written, ephemeral_1h_input_tokens: 91_000, ephemeral_5m_input_tokens: 0 }, at + 110 * MIN), 3600)
+})
+
+test('wait: the stretch is anchored at the asking request start when the transcript has one inside this turn, else now', () => {
+  const { home, config, transcript } = setup()
+  touch({ session_id: SID, prompt: 'do the thing' }, ctxAt(config, T0 + 5 * MIN))
+  const asked = T0 + 6 * MIN
+  // The prompt entry is stamped a second before the hook ran; the answer that asked is written after it.
+  writeLines(home, [assistantLine({ at: T0, ...BIG }), userLine(T0 + 5 * MIN - 900, 'do the thing'), assistantLine({ at: asked - 1_000, ...BIG })])
+  waitStart({ session_id: SID, transcript_path: transcript }, ctxAt(config, asked), INTERACTIVE)
+  assert.equal(loadSession(home, SID)!.cacheAnchorAt, T0 + 5 * MIN - 900)
+  assert.equal(loadSession(home, SID)!.lastTurnEndAt, asked, "the policy's clock is still the hook's")
+  assert.equal(loadSession(home, SID)!.lastRequestAt, asked)
+
+  // A start from before this turn is not its own: now.
+  const old = setup()
+  touch({ session_id: SID, prompt: 'do the thing' }, ctxAt(old.config, T0 + 5 * MIN))
+  writeLines(old.home, [userLine(T0 + MIN, 'earlier prompt'), assistantLine({ at: T0 + 2 * MIN, ...BIG })])
+  waitStart({ session_id: SID }, ctxAt(old.config, asked), INTERACTIVE)
+  assert.equal(loadSession(old.home, SID)!.cacheAnchorAt, asked)
+})
