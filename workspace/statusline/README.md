@@ -38,7 +38,7 @@ Every setting is an environment variable (a settings file's `env` block works):
 
 | env | meaning |
 |---|---|
-| `CTX_STATUSLINE_DISABLED` | `1`: no line and no agent decoration from this mod; the engine draws its own (a `statusLine` command, or nothing) |
+| `CTX_STATUSLINE_DISABLED` | `1` (or `true`, `yes`, `on`): no line and no agent decoration from this mod; the engine draws its own (a `statusLine` command, or nothing); `0` turns it back on |
 | `CTX_STATUSLINE_SESSION_URL` | link `cc:<id8>` to this URL, `{id}` and `{id8}` filled in; the plan glyph links to it with `#plan` |
 | `CTX_STATUSLINE_ACCOUNTS` | JSON object, config-dir name to account label (`{".claude-work2": "work 🔑work2"}`); a label other than the name after `.claude-` shows yellow |
 | `CTX_STATUSLINE_META_DIR` | folder of session records `<session id>.json` (`display_state`, `plan_total`, `plan_open`, ...), relative to `CLAUDE_CONFIG_DIR`; unset, no state glyph and no plan |

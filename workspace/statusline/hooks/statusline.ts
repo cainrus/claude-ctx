@@ -25,7 +25,7 @@ export const PACKAGE_DIR = 'workspace/statusline'
 
 /** Every setting, an env variable each; the README lists them from here. */
 export const SETTINGS: ReadonlyArray<{ env: string; meaning: string }> = Object.freeze([
-  { env: 'CTX_STATUSLINE_DISABLED', meaning: '`1`: no line and no agent decoration from this mod; the engine draws its own (a `statusLine` command, or nothing)' },
+  { env: 'CTX_STATUSLINE_DISABLED', meaning: '`1` (or `true`, `yes`, `on`): no line and no agent decoration from this mod; the engine draws its own (a `statusLine` command, or nothing); `0` turns it back on' },
   { env: 'CTX_STATUSLINE_SESSION_URL', meaning: 'link `cc:<id8>` to this URL, `{id}` and `{id8}` filled in; the plan glyph links to it with `#plan`' },
   { env: 'CTX_STATUSLINE_ACCOUNTS', meaning: 'JSON object, config-dir name to account label (`{".claude-work2": "work 🔑work2"}`); a label other than the name after `.claude-` shows yellow' },
   { env: 'CTX_STATUSLINE_META_DIR', meaning: 'folder of session records `<session id>.json` (`display_state`, `plan_total`, `plan_open`, ...), relative to `CLAUDE_CONFIG_DIR`; unset, no state glyph and no plan' },
@@ -226,7 +226,7 @@ async function refreshMeta($: $, s: Settings): Promise<void> {
   }
 }
 
-/** Counts the looks at the worked-on folder; only the newest one writes. Never reset: a look still pending from before must not match. */
+/** Counts the looks at the worked-on folder; only the newest one writes. It only grows, so a look still pending from before never matches. */
 let workdirGen = 0
 /** When the look in flight started, by the wall clock; undefined when none runs. */
 let workdirSince: number | undefined
@@ -475,6 +475,9 @@ export function resetForTest(): void {
   workdirAt = 0
   workdirSince = undefined
   workdirPath = undefined
+  // A look or refresh still pending from before the reset must not match a fresh one's number.
+  workdirGen++
+  gitGen++
   gitDirOf = undefined
   for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k]
 }

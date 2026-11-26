@@ -140,6 +140,65 @@ test('one look at the folder at a time; a hung one holds the next back 30 s, and
   assert.match(plain(renderStatusLine($, site(), echo).props.text!), / new($| · )/, 'the hung look\'s late answer is dropped')
 })
 
+test('a tick\'s git refresh that a look overtook writes nothing: the line never mixes two folders', async (t) => {
+  const { $ } = engine()
+  let clock = NOW
+  const realNow = Date.now
+  Date.now = () => clock
+  t.after(() => {
+    Date.now = realNow
+  })
+  // Two worktrees of one project under home: /Users/u/a on branch aaa, /Users/u/b on branch bbb.
+  const dirs = new Set(['/Users/u/a', '/Users/u/a/.git', '/Users/u/b', '/Users/u/b/.git'])
+  const files: Record<string, string> = {
+    '/Users/u/a/.git/HEAD': 'ref: refs/heads/aaa\n',
+    '/Users/u/b/.git/HEAD': 'ref: refs/heads/bbb\n',
+    '/Users/u/a/.git/config': '[remote "origin"]\n\turl = git@x:p.git\n',
+    '/Users/u/b/.git/config': '[remote "origin"]\n\turl = git@x:p.git\n',
+  }
+  let held: ((text: string) => void) | undefined
+  let hold = false
+  let tick: () => void = () => {}
+  let rows: unknown[] = []
+  const e = $ as Record<string, any>
+  e.clock.now = async () => clock
+  e.clock.every = (_ms: number, fn: () => void) => {
+    tick = fn
+    return { cancel() {} }
+  }
+  e.session.cwd = async () => '/Users/u/a'
+  e.session.messages = async () => rows
+  e.fs.stat = async (p: string) => {
+    if (dirs.has(p)) return { kind: 'dir', mtimeMs: 0 }
+    if (p in files) return { kind: 'file', mtimeMs: 0 }
+    throw new Error(`${p} failed: ENOENT`)
+  }
+  e.fs.read = async (p: string) => {
+    if (hold && p === '/Users/u/a/.git/HEAD') return new Promise<string>((r) => (held = r))
+    if (p in files) return files[p]!
+    throw new Error(`${p} failed: ENOENT`)
+  }
+  renderStatusLine($, site(), echo)
+  await settle()
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / aaa · Opus 5\.5 · a /)
+  hold = true
+  tick()
+  await settle()
+  assert.ok(held, 'the tick\'s refresh waits on HEAD')
+  rows = [{ role: 'assistant', toolUses: [{ input: { file_path: '/Users/u/b/x.ts' } }] }]
+  clock += 10_000
+  statuslineStepAnswered($, {}, null)
+  await settle()
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / bbb · Opus 5\.5 · b /, 'the look moved to b')
+  held!('ref: refs/heads/aaa\n')
+  await settle()
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / bbb · Opus 5\.5 · b /, 'the tick\'s late answer about a is dropped')
+  hold = false
+  tick()
+  await settle()
+  assert.match(plain(renderStatusLine($, site(), echo).props.text!), / bbb · Opus 5\.5 · b /, 'and the next tick looks at b, the folder the look found')
+})
+
 test('the session record, the account table and the session URL reach the line', async () => {
   const meta = '/Users/u/.claude-work2/sessions-meta/' + SID + '.json'
   const { $ } = engine(
