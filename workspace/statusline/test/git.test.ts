@@ -141,13 +141,33 @@ test('withLock waits for a held lock, then runs; past its wait it runs nothing',
   const lock = join(root, 'x.lock')
   assert.equal(withLock(lock, () => 1), 1)
   assert.equal(takeLock(lock, Math.floor(Date.now() / 1000)), true, 'released after the run')
-  assert.equal(withLock(lock, () => 2, 120), undefined)
+  assert.equal(withLock(lock, () => 2, { waitMs: 120 }), undefined)
 })
 
 test('a config dir is never a worked-on folder, an ignored folder only on its own boundary', () => {
   const home = '/Users/u'
-  const inputs = [{ file_path: '/Users/u/.claude-work2/x' }, { file_path: '/Users/u/tmpfoo/a' }, { file_path: '/Users/u/tmp/b' }]
-  assert.deepEqual(candidatesOf(inputs, home, ['/Users/u/tmp']), ['/Users/u/tmpfoo/a'])
+  const inputs = [{ file_path: '/Users/u/.claude-work2/x' }, { file_path: '/Users/u/.claude/y' }, { file_path: '/Users/u/.claudette/z' }, { file_path: '/Users/u/tmpfoo/a' }, { file_path: '/Users/u/tmp/b' }]
+  assert.deepEqual(candidatesOf(inputs, home, ['/Users/u/tmp']), ['/Users/u/tmpfoo/a', '/Users/u/.claudette/z'])
+})
+
+test('of two takers that both saw a lock stale, the second finds the first one\'s fresh lock and leaves it', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const lock = join(root, 'x.lock')
+  assert.equal(takeLock(lock, 1000), true)
+  assert.equal(takeLock(lock, 2000), true, 'first taker: stale, taken over')
+  assert.equal(takeLock(lock, 2000), false, 'second taker, same moment: the lock is fresh now')
+  mkdirSync(`${lock}.takeover`)
+  assert.equal(takeLock(lock, 9000), false, 'a takeover in progress is left to its taker')
+})
+
+test('a lock folder with no stamp yet is a holder between mkdir and its write, not a stale lock', (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'ctx-sl-lock-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const lock = join(root, 'x.lock')
+  mkdirSync(lock)
+  writeFileSync(join(lock, 'at'), '')
+  assert.equal(takeLock(lock, Math.floor(Date.now() / 1000)), false)
 })
 
 test('which pass is due: untracked every two minutes, tracked every 20 s or when the index moved', () => {

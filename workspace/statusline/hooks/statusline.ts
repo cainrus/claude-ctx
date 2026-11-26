@@ -290,7 +290,7 @@ async function tick($: $): Promise<void> {
     const s = await settingsOf($)
     // A first refresh that failed is made up here, not on every draw.
     if (facts.sessionId === undefined) await refreshSession($, s)
-    await Promise.all([refreshMeta($, s), refreshGit($, s)])
+    await Promise.all([refreshMeta($, s), facts.dir === undefined ? refreshWorkdir($, s) : refreshGit($, s)])
     redraw($)
   } catch {
     // INVARIANT: a refresh that fails keeps the last line: a status line must never break a session.

@@ -8,7 +8,7 @@
  * Turn it on with `CTX_STATUSLINE_RATE_DIR`.
  */
 
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { withLock } from './lock.ts'
 
@@ -66,7 +66,8 @@ export function recordRates(dir: string, account: string, session: string, at: n
   if (next.five.pct === null && next.week.pct === null) return false
   mkdirSync(dir, { recursive: true })
   // Two sessions of one account reading one new step in the same moment would both append it: one at a time.
-  return withLock(join(dir, `${account}.lock`), () => appendStep(dir, account, session, at, next)) ?? false
+  // A holder keeps it for milliseconds, so a dead one's is stale in seconds, and the wait outlasts that.
+  return withLock(join(dir, `${account}.lock`), () => appendStep(dir, account, session, at, next), { waitMs: 6000, maxAgeSec: 4 }) ?? false
 }
 
 function appendStep(dir: string, account: string, session: string, at: number, next: RatePair): boolean {
@@ -83,7 +84,11 @@ function appendStep(dir: string, account: string, session: string, at: number, n
   const pair = { five: five.window, week: week.window }
   appendFileSync(join(dir, `${account}.jsonl`), journalLine(at, session, pair))
   const tmp = `${lastPath}.${process.pid}`
-  writeFileSync(tmp, lastText(pair))
-  renameSync(tmp, lastPath)
+  try {
+    writeFileSync(tmp, lastText(pair))
+    renameSync(tmp, lastPath)
+  } finally {
+    rmSync(tmp, { force: true })
+  }
   return true
 }

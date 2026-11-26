@@ -90,6 +90,9 @@ test('every event once: each package its own, the shared two from the root', () 
 test('a turn the gate refuses never reaches the model, and adds nothing to Δ', async () => {
   const h = hooks()
   const { $ } = engine({ decision: 'block', reason: 'the menu' })
+  const draw = h.get('ui.render {"component":"StatusLine"}')!
+  draw($, { props: { text: null, maxRows: 5 } }, (e: unknown) => e)
+  await settle()
   await h.get('turn.start')!($, { turnId: 't1', text: '!ls' }, (e: unknown) => e)
   let asked = 0
   const next = async function* () {
@@ -100,6 +103,9 @@ test('a turn the gate refuses never reaches the model, and adds nothing to Δ', 
   assert.equal(asked, 0)
   assert.deepEqual(chunks, [{ kind: 'text', index: 0, text: 'the menu' }, { kind: 'stop', stopReason: 'end_turn', usage: null }])
   assert.equal((result as { answer: string }).answer, 'the menu')
+  const line = (draw($, { props: { text: null, maxRows: 5 } }, (e: unknown) => e) as { props: { text: string } }).props.text
+  assert.match(plain(line), /^cc:abcdef12 /)
+  assert.doesNotMatch(plain(line), /Δ/)
 })
 
 test('a turn the gate lets through runs the request once, and its price reaches the status line', async () => {
