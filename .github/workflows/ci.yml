@@ -40,7 +40,8 @@ jobs:
     strategy:
       matrix:
         # Pinned: a new release may add checks. Bump it on purpose, after a local run.
-        claude: ['2.1.316']
+        # 2.1.332: the first one run with the StatusLine and AgentRow sites the status line draws in.
+        claude: ['2.1.332']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

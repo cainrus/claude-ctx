@@ -1,7 +1,8 @@
 # statusline
 
 A package of the [claude-ctx](../../README.md) plugin: the line under the prompt, drawn by the plugin's mod from the
-engine's own figures, with no `statusLine` command and no process per keystroke.
+engine's own figures, with no `statusLine` command and no process per keystroke. Needs a Claude Code with the
+`StatusLine` and `AgentRow` render sites (checked on 2.1.332); an older one runs the rest of the plugin without it.
 
 ```
 cc:81ef4c9f home 🔑home2 ⏳ 📋 2/4 · main±2↑1 · Opus 5.5 · claude-ctx · $7.05Δ(10+40)¢ ≡277k
