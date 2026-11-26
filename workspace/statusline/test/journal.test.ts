@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -125,6 +125,17 @@ test('run through a link (an installed plugin\'s path), the helper still works',
   const r = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', join(linked, 'bin', 'statusline.ts'), 'rate'], { input: JSON.stringify(input), encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   assert.equal(JSON.parse(readFileSync(join(dir, '.claude-home.jsonl'), 'utf8')).five, 9)
+})
+
+test('a dead holder\'s journal lock is taken over inside the wait: the step is written once', (t) => {
+  const { measure, lines, dir } = sandbox(t)
+  mkdirSync(join(dir, '.claude-work2.lock'), { recursive: true })
+  writeFileSync(join(dir, '.claude-work2.lock', 'at'), `${Math.floor(Date.now() / 1000) - 10} dead\n`)
+  const started = Date.now()
+  measure(5, 6)
+  assert.deepEqual(lines().map((l) => [l.five, l.week]), [[5, 6]])
+  assert.ok(Date.now() - started < 5000, 'taken over, not waited out')
+  assert.equal(existsSync(join(dir, '.claude-work2.lock')), false, 'and freed after')
 })
 
 test('bad input is exit 0 and silence', () => {

@@ -104,6 +104,30 @@ test('an engine call that fails under a measurement is swallowed, not left unhan
   await settle()
 })
 
+test('a look at the folder hung on the engine holds the next ones back for 30 s, not for good', async () => {
+  const { $ } = engine()
+  let clock = NOW
+  let calls = 0
+  const e = $ as { clock: { now: () => Promise<number> }; session: { messages: () => Promise<unknown[]> } }
+  e.clock.now = async () => clock
+  e.session.messages = () => {
+    calls++
+    return calls === 1 ? new Promise(() => {}) : Promise.resolve([])
+  }
+  renderStatusLine($, site(), echo)
+  await settle()
+  assert.equal(calls, 1, 'the first look hangs')
+  const u = { model: 'claude-opus-5-5', input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
+  clock += 10_000
+  statuslineStepAnswered($, {}, u)
+  await settle()
+  assert.equal(calls, 1, 'held back while it may still answer')
+  clock += 30_000
+  statuslineStepAnswered($, {}, u)
+  await settle()
+  assert.equal(calls, 2, 'past 30 s the next look goes ahead')
+})
+
 test('the session record, the account table and the session URL reach the line', async () => {
   const meta = '/Users/u/.claude-work2/sessions-meta/' + SID + '.json'
   const { $ } = engine(

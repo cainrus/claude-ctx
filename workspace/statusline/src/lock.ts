@@ -67,8 +67,9 @@ export function takeLock(lock: string, nowSec: number, maxAgeSec = LOCK_MAX_AGE_
   try {
     mkdirSync(takeover)
   } catch {
+    // The wall clock, not the caller's `nowSec`: it is set against the folder's real time.
     const since = mtimeSec(takeover)
-    if (since !== undefined && nowSec - since > TAKEOVER_MAX_AGE_SEC) rmSync(takeover, { recursive: true, force: true })
+    if (since !== undefined && Date.now() / 1000 - since > TAKEOVER_MAX_AGE_SEC) rmSync(takeover, { recursive: true, force: true })
     return undefined
   }
   try {
@@ -89,17 +90,23 @@ export function takeLock(lock: string, nowSec: number, maxAgeSec = LOCK_MAX_AGE_
 
 /** Frees the lock if it is still the one `token` took: a holder taken over while it stalled frees nothing. */
 export function releaseLock(lock: string, token: LockToken): void {
+  // WARNING: the look and the removal are two steps. A takeover landing between them needs this holder past the lock's
+  // age at that very moment; it costs what no lock costs (a duplicate journal line, a second git count), nothing worse.
   if (stampOf(lock).token === token) rmSync(lock, { recursive: true, force: true })
 }
 
-/** Runs `fn` under the lock, waiting for it up to `waitMs`; past the wait it runs anyway, as it would with no lock at all. */
-export function withLock<T>(lock: string, fn: () => T, waitMs = 2000): T {
+/**
+ * Runs `fn` under the lock, waiting for it up to `waitMs` (a dead holder's lock
+ * is taken over once older than `maxAgeSec`); past the wait it runs anyway, as
+ * it would with no lock at all. Runs in a helper process, never the mod.
+ */
+export function withLock<T>(lock: string, fn: () => T, waitMs = 2000, maxAgeSec = LOCK_MAX_AGE_SEC): T {
   const until = Date.now() + waitMs
   const pause = new Int32Array(new SharedArrayBuffer(4))
-  let token = takeLock(lock, Math.floor(Date.now() / 1000))
+  let token = takeLock(lock, Math.floor(Date.now() / 1000), maxAgeSec)
   while (token === undefined && Date.now() < until) {
     Atomics.wait(pause, 0, 0, 50)
-    token = takeLock(lock, Math.floor(Date.now() / 1000))
+    token = takeLock(lock, Math.floor(Date.now() / 1000), maxAgeSec)
   }
   try {
     return fn()

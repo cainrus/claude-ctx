@@ -143,7 +143,7 @@ test('withLock waits for a held lock, and past its wait runs anyway: a stuck loc
   const token = takeLock(lock, Math.floor(Date.now() / 1000))
   assert.ok(token, 'released after the run')
   const started = Date.now()
-  assert.equal(withLock(lock, () => 2, 120), 2)
+  assert.equal(withLock(lock, () => 2, 120, 60), 2)
   assert.ok(Date.now() - started >= 100, 'it waited first')
   assert.equal(readFileSync(join(lock, 'at'), 'utf8').includes(token!), true, 'and left the holder\'s lock alone')
 })
@@ -183,6 +183,10 @@ test('of two takers that both saw a lock stale, the second finds the first one\'
   assert.equal(takeLock(lock, 2000), undefined, 'second taker, same moment: the lock is fresh now')
   mkdirSync(`${lock}.takeover`)
   assert.equal(takeLock(lock, 9000), undefined, 'a takeover in progress is left to its taker')
+  const old = Math.floor(Date.now() / 1000) - 20
+  utimesSync(`${lock}.takeover`, old, old)
+  assert.equal(takeLock(lock, 9000), undefined, 'a dead taker\'s takeover is cleared by the wall clock...')
+  assert.ok(takeLock(lock, 9000), '...and the next look takes the stale lock over')
 })
 
 test('a lock folder with no stamp yet is aged by its folder\'s time: fresh, held; old, taken over', (t) => {

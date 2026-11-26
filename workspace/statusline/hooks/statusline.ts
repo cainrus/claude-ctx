@@ -226,12 +226,21 @@ async function refreshMeta($: $, s: Settings): Promise<void> {
   }
 }
 
-let workdirBusy = false
+/** Since when a look at the worked-on folder runs; undefined when none does. */
+let workdirSince: number | undefined
+/** A look running longer than this is hung on an engine call: the next one goes ahead. */
+const WORKDIR_HUNG_MS = 30_000
+
+function workdirBusy(now: number): boolean {
+  return workdirSince !== undefined && now - workdirSince < WORKDIR_HUNG_MS
+}
 
 async function refreshWorkdir($: $, s: Settings): Promise<void> {
   // One look at a time: a slow one and the tick's retry would both write the folder and the git facts.
-  if (workdirBusy) return
-  workdirBusy = true
+  const now = await $.clock.now()
+  if (workdirBusy(now)) return
+  const mine = now
+  workdirSince = mine
   try {
     workdirAt = await $.clock.now()
     const cwd = await $.session.cwd()
@@ -246,7 +255,7 @@ async function refreshWorkdir($: $, s: Settings): Promise<void> {
     facts.dir = dir.split('/').pop() || dir
     await refreshGit($, s, dir)
   } finally {
-    workdirBusy = false
+    if (workdirSince === mine) workdirSince = undefined
   }
 }
 
@@ -299,7 +308,9 @@ async function tick($: $): Promise<void> {
     const s = await settingsOf($)
     // A first refresh that failed is made up here, not on every draw.
     if (facts.sessionId === undefined) await refreshSession($, s)
-    await Promise.all([refreshMeta($, s), facts.dir === undefined ? refreshWorkdir($, s) : refreshGit($, s)])
+    // A running look at the folder refreshes git itself; the tick does not race it.
+    const git = workdirBusy(await $.clock.now()) ? Promise.resolve() : facts.dir === undefined ? refreshWorkdir($, s) : refreshGit($, s)
+    await Promise.all([refreshMeta($, s), git])
     redraw($)
   } catch {
     // INVARIANT: a refresh that fails keeps the last line: a status line must never break a session.
@@ -452,7 +463,7 @@ export function resetForTest(): void {
   text = undefined
   turn = { inUsd: 0, outUsd: 0 }
   workdirAt = 0
-  workdirBusy = false
+  workdirSince = undefined
   gitDirOf = undefined
   for (const k of Object.keys(facts)) delete (facts as Record<string, unknown>)[k]
 }
