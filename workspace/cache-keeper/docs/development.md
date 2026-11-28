@@ -13,9 +13,15 @@ written by hand there but rendered between `<!-- gen:NAME -->` markers by `scrip
 
 | block | source |
 |---|---|
-| `settings`, `handoff-settings` | `SETTINGS` in `src/config.ts`; defaults are what `/ctx:status` reports on an empty config |
-| `status-lines` | `STATUS_EXAMPLES` in `hooks/status.ts`, printed by the real `format()` |
-| `ledger-events` | `LEDGER_EVENTS` in `src/ledger.ts`, the table the event type is derived from |
+| `settings`, `handoff-settings` | <!--ref:SETTINGS-->[SETTINGS](../src/config.ts#L75)<!--/ref-->; defaults are what `/ctx:status` reports on an empty config |
+| `status-lines` | <!--ref:STATUS_EXAMPLES-->[STATUS_EXAMPLES](../hooks/status.ts#L174)<!--/ref-->, printed by the real `format()` |
+| `ledger-events` | <!--ref:LEDGER_EVENTS-->[LEDGER_EVENTS](../src/ledger.ts#L11)<!--/ref-->, the table the event type is derived from |
+| `ref NAME` | the exported `NAME`: a link to its line and the first paragraph of its doc comment |
+
+Inside a sentence `<!--ref:NAME--><!--/ref-->` renders the link alone; quoted in a code span or
+a fence it stays text. A renamed or removed symbol, one declared in two files, a symbol without a
+doc comment (for `gen:ref`) and a ref marker without its pair fail by name with the doc's
+file:line; a moved symbol only makes the doc stale, and `node scripts/docs.ts` rewrites it.
 
 `test/docs.test.ts` fails when a generated block is stale, when a setting `/ctx:status` reports is missing
 from `SETTINGS` (or the other way round), and when a documented env variable does not drive its key. So a new

@@ -31,6 +31,7 @@ export const LEDGER_EVENTS = Object.freeze({
 
 export type LedgerEvent = keyof typeof LEDGER_EVENTS
 
+/** One line of `ledger.jsonl`: a decision or an outcome; which fields are set depends on `event`. */
 export interface LedgerEntry {
   /** ISO timestamp. */
   t: string

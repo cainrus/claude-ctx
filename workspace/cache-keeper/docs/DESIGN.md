@@ -86,7 +86,7 @@ Not covered: Windows paths with backslashes in `$0` (untested under Git Bash).
    `manual-ping` and never scored.
 5. **`SessionEnd` → `end`** deletes the session state.
 
-The wake message is fixed, one line; its second half (`WAKE_REPLY`, `src/wake-text.ts`) also ends
+The wake message is fixed, one line; its second half (<!--ref:WAKE_REPLY-->[WAKE_REPLY](../src/wake-text.ts#L2)<!--/ref-->) also ends
 the handoff wake:
 
 ```
@@ -152,11 +152,22 @@ it decides which reason the ledger blames.
 
 ## State and ledger
 
-`$CTX_KEEPER_HOME`, default `~/.claude-ctx/keeper/`:
+`$CTX_KEEPER_HOME`, default `~/.claude-ctx/keeper/`, holds three kinds of file, one type each.
+The fields and what each one means live in the code, on those types; this page does not copy them.
 
-- `sessions/<session_id>.json` — per-session state (above);
-- `away-budget.json` — the machine-wide bucket;
-- `ledger.jsonl` — one line per decision: `{t, sessionId, event, reason?, ctxTokens?, ageSec?, ...}`; the events are `LedgerEvent` in `src/ledger.ts` (`ping`, `skip`, `resume`, `wake-hit`, `wake-miss`, `manual-ping`, the handoff ones, ...).
+<!-- gen:ref SessionState -->
+[SessionState](../src/state.ts#L9) — One session's keeper state, `sessions/<session_id>.json`: cache clock, ping stretch, costs, pending work.
+<!-- /gen:ref -->
+
+<!-- gen:ref AwayBudget -->
+[AwayBudget](../src/state.ts#L74) — The machine-wide bucket, `away-budget.json`: pings spent while nobody is at the keyboard.
+<!-- /gen:ref -->
+
+<!-- gen:ref LedgerEntry -->
+[LedgerEntry](../src/ledger.ts#L35) — One line of `ledger.jsonl`: a decision or an outcome; which fields are set depends on `event`.
+<!-- /gen:ref -->
+
+The ledger's events, one line each, are in [report.md](report.md) (generated from <!--ref:LEDGER_EVENTS-->[LEDGER_EVENTS](../src/ledger.ts#L11)<!--/ref-->).
 
 `cache-keeper report` summarises the ledger: pings, hits, misses, stretches
 resumed after a ping vs abandoned, refusals by reason, and an estimated balance

@@ -4,7 +4,7 @@ Environment variables (set them in the `env` block of your Claude Code settings 
 `$CTX_KEEPER_HOME/config.json`, which overrides the defaults. The JSON keys are the names in the first column.
 `/ctx:status` shows every value in force and where it came from.
 
-The table is generated from `SETTINGS` in `src/config.ts` (`node scripts/docs.ts`); edit it there.
+The table is generated from <!--ref:SETTINGS-->[SETTINGS](../src/config.ts#L75)<!--/ref--> (`node scripts/docs.ts`); edit it there.
 
 <!-- gen:settings -->
 | key | env | default | meaning |

@@ -21,11 +21,11 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/handoff.ts:341`](../src/handoff.ts#L341) a background session has nobody to answer the menu: a held peer message or task notification would freeze it while its sender reads "delivered". It pays the cold turn here; a handoff would leave the sender writing to a closed session.
 - [`src/handoff.ts:358`](../src/handoff.ts#L358) once the menu is shown its answer decides: `auto` would take the reply (`1`, `2`) as the message.
 - [`src/hooks.ts:5`](../src/hooks.ts#L5) every hook enters through bin/cache-keeper.sh: without a usable node it exits 0 in silence (`check` says why).
-- [`src/ledger.ts:71`](../src/ledger.ts#L71) one small line per O_APPEND write, so concurrent hooks interleave whole lines.
+- [`src/ledger.ts:72`](../src/ledger.ts#L72) one small line per O_APPEND write, so concurrent hooks interleave whole lines.
 - [`src/policy.ts:69`](../src/policy.ts#L69) null (an unknown probe) is neither at the keyboard nor gone: read as present, a broken probe would lift the away budget, the only machine-wide cap.
 - [`src/policy.ts:75`](../src/policy.ts#L75) branch order is the policy and must match SKIP_REASONS: it decides which reason the ledger blames.
 - [`src/presence.ts:79`](../src/presence.ts#L79) trusted only with a graphical session: without a desktop to set it, IdleHint can stay "no" forever, read as "at the keyboard", and lift the away budget.
-- [`src/state.ts:93`](../src/state.ts#L93) an id that is not a plain UUID is flattened so it cannot escape the sessions directory.
+- [`src/state.ts:95`](../src/state.ts#L95) an id that is not a plain UUID is flattened so it cannot escape the sessions directory.
 - [`src/transcript.ts:33`](../src/transcript.ts#L33) hooks/status.ts `ttlOfUsage` is the mod's copy of this rule (it also reads the flat form of a `turn.step` usage); keep the two in step (test/status.test.ts runs one table on both).
 - [`src/transcript.ts:55`](../src/transcript.ts#L55) sidechain (subagent) and synthetic entries are skipped: their usage is not the main thread's cache.
 - [`src/warmth.ts:62`](../src/warmth.ts#L62) a reader takes ids from outside (a hook payload, a CLI argument): only an id the writers' safeId leaves as it is reaches a path or the ledger match.
@@ -53,7 +53,7 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/handoff-run.ts:16`](../src/handoff-run.ts#L16) with CLAUDECODE / CLAUDE_CODE_* set a nested `claude` writes no transcript and `--resume` finds nothing.
 - [`src/hooks.ts:20`](../src/hooks.ts#L20) under `claude -p` (sdk-cli) async hooks are not backgrounded, so the sleep would hold a one-shot run open.
 - [`src/presence.ts:145`](../src/presence.ts#L145) Claude Code 2.1.332 stamps a background job's launch prompt as typed (origin `composer`), so it read as the person's own; the job keeps that prompt as `intent` in $CLAUDE_JOB_DIR/state.json, and only a prompt equal to it is told apart.
-- [`src/state.ts:180`](../src/state.ts#L180) measured, a fork after /compact sent the compacted 42k uncached and wrote none of it; a wake turn would write it all, which the person's own next turn pays anyway.
+- [`src/state.ts:182`](../src/state.ts#L182) measured, a fork after /compact sent the compacted 42k uncached and wrote none of it; a wake turn would write it all, which the person's own next turn pays anyway.
 - [`src/transcript.ts:65`](../src/transcript.ts#L65) an error turn under another name has all-zero usage; reading it would zero the context.
 - [`hooks/gate.ts:14`](../hooks/gate.ts#L14) Node needs the `.ts` suffix under `npm test`, but the validator's compiler rejects it (TS5097) and reads no tsconfig of ours. @ts-ignore covers the next line only, so each import stays on one line.
 - [`hooks/gate.ts:153`](../hooks/gate.ts#L153) UserPromptSubmit never fires for a `!` command or a built-in slash command (measured on Claude Code 2.1.301), so they are gated here, at the turn's first model request; a refusal sends none.
@@ -79,8 +79,8 @@ contributors and for agents editing the code: none of these may be removed or ch
 - [`src/presence.ts:104`](../src/presence.ts#L104) order matters. The precise probes need the desktop's session bus or X display, which a hook inherits from an interactive session but not from a daemon-spawned one; logind needs neither, so it is the last resort.
 - [`src/presence.ts:164`](../src/presence.ts#L164) Claude Code starts background sessions with CLAUDE_JOB_DIR and stamps their transcript lines "sessionKind":"bg"; hooks inherit the env var, the transcript is the fallback.
 - [`src/prices.ts:79`](../src/prices.ts#L79) family keys ("opus", the pre-0.6.6 form) apply first and rewrite every row they name, so a model-prefix override still wins over its family.
-- [`src/state.ts:140`](../src/state.ts#L140) a file apart from the session's: the mod claims at turn end, just when `record` rewrites the session file, and one write would drop the other's.
-- [`src/state.ts:186`](../src/state.ts#L186) this counts from `lastTurnEndAt` with the config TTL, as the ping timer does. The status line (hooks/status.ts) anchors at `cacheAnchorAt` (the request's start) with the bucket the turn wrote, because that is when the server's clock runs; the two ends can differ.
+- [`src/state.ts:142`](../src/state.ts#L142) a file apart from the session's: the mod claims at turn end, just when `record` rewrites the session file, and one write would drop the other's.
+- [`src/state.ts:188`](../src/state.ts#L188) this counts from `lastTurnEndAt` with the config TTL, as the ping timer does. The status line (hooks/status.ts) anchors at `cacheAnchorAt` (the request's start) with the bucket the turn wrote, because that is when the server's clock runs; the two ends can differ.
 - [`src/transcript.ts:240`](../src/transcript.ts#L240) decode only whole lines: a chunk edge can cut a multi-byte character, so bytes are carried, not text.
 - [`src/transcript.ts:270`](../src/transcript.ts#L270) the first, not the last: when the first request rewrote the context, every later one reads that fresh write and looks like a hit.
 - [`src/warmth.ts:182`](../src/warmth.ts#L182) Claude Code writes a synthetic entry (model "<synthetic>", isApiErrorMessage) with zero usage for a refused request, a rate limit say: no touch.

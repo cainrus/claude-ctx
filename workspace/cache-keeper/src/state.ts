@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { Config } from './config.ts'
 
+/** One session's keeper state, `sessions/<session_id>.json`: cache clock, ping stretch, costs, pending work. */
 export interface SessionState {
   sessionId: string
   transcriptPath?: string
@@ -69,6 +70,7 @@ export interface SessionState {
   promptHookPassed?: { at: number; head: string }
 }
 
+/** The machine-wide bucket, `away-budget.json`: pings spent while nobody is at the keyboard. */
 export interface AwayBudget {
   awayPingsSincePresence: number
   updatedAt?: number

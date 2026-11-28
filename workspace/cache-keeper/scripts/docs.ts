@@ -13,6 +13,10 @@
  *   ledger-events     src/ledger.ts LEDGER_EVENTS, the table the event type is derived from
  *   module PATH       the module header of PATH (its first doc comment)
  *   guardrails        every INVARIANT / WORKAROUND / WARNING comment in src, hooks, bin
+ *   ref NAME          a link to the exported NAME (file#line) and the first paragraph of its
+ *                     doc comment; the fields stay in the code, the doc only points there
+ *
+ * Inside a sentence, a link alone:  <!--ref:NAME-->...<!--/ref-->
  *
  *   node scripts/docs.ts          rewrite the docs in place
  *   node scripts/docs.ts --check  exit 1 and name the stale files; writes nothing
@@ -20,7 +24,7 @@
  * test/docs.test.ts runs the check, so CI fails on docs that no longer match the code.
  */
 
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -81,12 +85,12 @@ export function moduleHeader(path: string): string {
 }
 
 const GUARD = /^\s*(?:\/\/|#) (INVARIANT|WORKAROUND|WARNING): (.*)$/
-const GUARD_DIRS = ['src', 'hooks', 'bin']
+const SOURCE_DIRS = ['src', 'hooks', 'bin']
 
 /** Every guard comment in the shipped code, with its continuation lines, grouped by kind. */
 export function guardrails(): string {
   const found: Record<string, string[]> = { INVARIANT: [], WORKAROUND: [], WARNING: [] }
-  for (const dir of GUARD_DIRS) {
+  for (const dir of SOURCE_DIRS) {
     for (const file of readdirSync(join(REPO, dir)).filter((f) => /\.(ts|sh)$/.test(f)).sort()) {
       const lines = readFileSync(join(REPO, dir, file), 'utf8').split('\n')
       for (let i = 0; i < lines.length; i++) {
@@ -112,7 +116,103 @@ export function guardrails(): string {
     .join('\n\n')
 }
 
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** An exported declaration of NAME at the start of a line (not a re-export `export { NAME }`). */
+export const declOf = (name: string): RegExp =>
+  new RegExp(
+    `^export (?:declare )?(?:default )?(?:abstract )?(?:(?:const enum|enum|interface|type|const|let|var|class|namespace|module|(?:async )?function) |(?:async )?function\\* ?)${escapeRe(name)}(?![\\w$])`,
+  )
+
+export interface SymbolRef {
+  path: string
+  line: number
+  /** First paragraph of the doc comment right above the declaration, if any. */
+  summary?: string
+}
+
+function refFiles(root: string): string[] {
+  return SOURCE_DIRS.filter((dir) => existsSync(join(root, dir)))
+    .flatMap((dir) =>
+      (readdirSync(join(root, dir), { recursive: true }) as string[])
+        .filter((f) => f.endsWith('.ts'))
+        .map((f) => `${dir}/${f}`),
+    )
+    .sort()
+}
+
+/**
+ * Where the exported NAME is declared under ROOT. Overloads and merged interfaces in one file
+ * count as one symbol (the first one with a doc comment wins, else the first); declarations in two
+ * files are an error, as is none.
+ */
+export function findSymbol(name: string, root: string = REPO): SymbolRef {
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) throw new Error(`ref: "${name}" is not an identifier`)
+  const decl = declOf(name)
+  const hits: SymbolRef[] = []
+  for (const path of refFiles(root)) {
+    const lines = readFileSync(join(root, path), 'utf8').replace(/^﻿/, '').split('\n')
+    lines.forEach((l, i) => {
+      if (decl.test(l)) hits.push({ path, line: i + 1, summary: docAbove(lines, i) })
+    })
+  }
+  const files = new Set(hits.map((h) => h.path))
+  if (files.size !== 1) {
+    const where = files.size === 0 ? 'nowhere' : `in ${files.size} files (${[...files].join(', ')})`
+    throw new Error(`ref: ${name} is declared ${where} under ${SOURCE_DIRS.join(', ')}`)
+  }
+  return hits.find((h) => h.summary !== undefined) ?? hits[0]
+}
+
+/**
+ * The first paragraph of the `/** … *\/` that ends on the line right above `at`: up to a blank
+ * line or the first `@tag`, joined, `{@link X}` as `X`. Undefined when the comment above is not
+ * a doc comment, so a plain `/* … *\/` never lends the symbol an earlier comment's text.
+ */
+export function docAbove(lines: string[], at: number): string | undefined {
+  if (at === 0 || !lines[at - 1].trim().endsWith('*/')) return undefined
+  // the closing line is the comment's own, not a code line with a trailing `/* … */`
+  const close = lines[at - 1].trim()
+  if (!close.startsWith('/*') && !close.startsWith('*') && close.includes('/*')) return undefined
+  // walk up to the line that opens it; passing another `*/` means we left this comment
+  let start = at - 1
+  while (!lines[start].trim().startsWith('/*')) {
+    if (start === 0 || lines[start - 1].includes('*/')) return undefined
+    start--
+  }
+  if (!lines[start].trim().startsWith('/**')) return undefined
+  const body = lines
+    .slice(start, at)
+    .map((l) => l.trim().replace(/^\/\*\*\s?/, '').replace(/\s?\*\/$/, '').replace(/^\*(?!\/)\s?/, '').trim())
+  const para: string[] = []
+  for (const l of body) {
+    if (l.startsWith('@')) break
+    if (l === '') {
+      if (para.length > 0) break
+      continue
+    }
+    para.push(l)
+  }
+  if (para.length === 0) return undefined
+  return para.join(' ').replace(/\{@link(?:code|plain)?\s+([^}\s|]+)[^}]*\}/g, '`$1`')
+}
+
+// plain link text, no code span: backticks in the rendered link would pair with a stray backtick
+// earlier in the paragraph and quote the whole ref, freezing it
+const refLink = (name: string, r: SymbolRef): string => `[${name}](../${r.path}#L${r.line})`
+
+/** The body of a `gen:ref NAME` block: the link and the summary, which the symbol must have. */
+export function refLine(name: string, root: string = REPO): string {
+  const r = findSymbol(name, root)
+  if (r.summary === undefined) throw new Error(`ref: ${name} (${r.path}:${r.line}) has no doc comment to show`)
+  return `${refLink(name, r)} — ${r.summary}`
+}
+
 export const GENERATORS: Record<string, (arg?: string) => string> = {
+  ref: (name) => {
+    if (name === undefined) throw new Error('gen:ref needs a name')
+    return refLine(name)
+  },
   module: (path) => {
     if (path === undefined) throw new Error('gen:module needs a path')
     return moduleHeader(path)
@@ -138,16 +238,62 @@ export const GENERATORS: Record<string, (arg?: string) => string> = {
     ['| event | one line means |', '|---|---|', ...Object.entries(LEDGER_EVENTS).map(([k, v]) => `| ${code(k)} | ${v} |`)].join('\n'),
 }
 
-const BLOCK = /<!-- gen:([a-z-]+)(?: ([^ ]+))? -->\n[\s\S]*?<!-- \/gen:\1 -->/g
+// One pass over the doc as written, so every error names a line of the file on disk. Whichever
+// starts first wins: a fence (``` or ~~~, any length) or a code span quotes whatever it holds,
+// markers included; a gen block and an inline ref are rendered. The rendered link holds a code
+// span itself, so a ref is matched whole, and its text may not hold another `<!--`, so an
+// unpaired opener is never swallowed by the next ref's closer.
+const TOKEN = new RegExp(
+  [
+    // indented or not, empty or not; an unclosed fence runs to the end of the doc. A backtick
+    // fence's info string holds no backtick (CommonMark), so "```x``` text" stays an inline span
+    String.raw`(?<fence>(?<=^|\n)[ \t]*(?<fmark>\`{3,}(?!\`)|~{3,}(?!~))(?:(?<=\`)[^\n\`]*|(?<=~)[^\n]*)(?=\n|$)(?:\n(?:[\s\S]*?\n)?[ \t]*\k<fmark>[\`~]*[ \t]*(?=\n|$)|[\s\S]*$))`,
+    // a block body never holds another opener: a missing closer must not reach the next block's
+    String.raw`(?<block><!-- gen:(?<gname>[a-z-]+)(?: (?<garg>[^ ]+))? -->\n(?:(?!<!-- gen:)[\s\S])*?<!-- \/gen:\k<gname> -->)`,
+    String.raw`(?<ref><!--ref:(?<rname>[^ >-]+)-->(?:(?!<!--).)*?<!--\/ref-->)`,
+    String.raw`(?<span>(?<tick>\`+)(?!\`)(?:(?!\n\n)[\s\S])*?(?<!\`)\k<tick>(?!\`))`,
+  ].join('|'),
+  'g',
+)
+// anything left in prose that looks like a marker is a typo, an unpaired or a wrapped one
+const STRAY = /<!--\s*\/?\s*(?:ref\b|gen:)[^>]*-->/
 
-/** The file with every block re-rendered; an unknown block name throws. */
-export function render(text: string): string {
-  return text.replace(BLOCK, (_, name: string, arg: string | undefined) => {
-    const gen = GENERATORS[name]
-    if (gen === undefined) throw new Error(`unknown generated block "${name}"`)
-    const open = arg === undefined ? `<!-- gen:${name} -->` : `<!-- gen:${name} ${arg} -->`
-    return `${open}\n${gen(arg)}\n<!-- /gen:${name} -->`
-  })
+/** The file with every block and ref re-rendered; a bad marker or symbol throws, naming file:line. */
+export function render(text: string, file = 'doc'): string {
+  const at = (offset: number): string => `${file}:${text.slice(0, offset).split('\n').length}`
+  const located = (offset: number, make: () => string): string => {
+    try {
+      return make()
+    } catch (e) {
+      throw new Error(`${at(offset)}: ${(e as Error).message}`)
+    }
+  }
+  const prose = (from: number, to: number): string => {
+    const part = text.slice(from, to)
+    const stray = STRAY.exec(part)
+    if (stray !== null) throw new Error(`${at(from + stray.index)}: marker without its pair: ${stray[0]}`)
+    return part
+  }
+  let out = ''
+  let last = 0
+  for (const m of text.matchAll(TOKEN)) {
+    const g = m.groups ?? {}
+    out += prose(last, m.index)
+    last = m.index + m[0].length
+    if (g.block !== undefined) {
+      const { gname: name, garg: arg } = g
+      const gen = GENERATORS[name]
+      if (gen === undefined) throw new Error(`${at(m.index)}: unknown generated block "${name}"`)
+      const open = arg === undefined ? `<!-- gen:${name} -->` : `<!-- gen:${name} ${arg} -->`
+      out += located(m.index, () => `${open}\n${gen(arg)}\n<!-- /gen:${name} -->`)
+    } else if (g.ref !== undefined) {
+      const name = g.rname
+      out += located(m.index, () => `<!--ref:${name}-->${refLink(name, findSymbol(name))}<!--/ref-->`)
+    } else {
+      out += m[0]
+    }
+  }
+  return out + prose(last, text.length)
 }
 
 /** Docs whose generated blocks differ from what the code renders now. */
@@ -156,20 +302,26 @@ export function staleDocs(dir: string = DOCS_DIR): string[] {
     .filter((f) => f.endsWith('.md'))
     .filter((f) => {
       const text = readFileSync(join(dir, f), 'utf8')
-      return render(text) !== text
+      return render(text, f) !== text
     })
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const check = process.argv.includes('--check')
-  const stale = staleDocs()
+  let stale: string[]
+  try {
+    stale = staleDocs()
+  } catch (e) {
+    console.error(`docs: ${(e as Error).message}`)
+    process.exit(1)
+  }
   if (check) {
     if (stale.length > 0) {
       console.error(`stale docs: ${stale.join(', ')}; run node scripts/docs.ts`)
       process.exit(1)
     }
   } else {
-    for (const f of stale) writeFileSync(join(DOCS_DIR, f), render(readFileSync(join(DOCS_DIR, f), 'utf8')))
+    for (const f of stale) writeFileSync(join(DOCS_DIR, f), render(readFileSync(join(DOCS_DIR, f), 'utf8'), f))
     console.log(stale.length === 0 ? 'docs up to date' : `rewrote ${stale.join(', ')}`)
   }
 }
